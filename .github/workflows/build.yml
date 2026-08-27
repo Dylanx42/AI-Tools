@@ -1,0 +1,21 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: ./build.sh
+      - name: Verify bundle
+        run: codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-quota-bar-macos
+          path: "dist/Codex 额度栏.app"
