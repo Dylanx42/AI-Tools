@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | [`codex-quota-bar`](./projects/codex-quota-bar/) | macOS 小工具 | 原生菜单栏 Codex 额度查看器 |
 | [`deepseek-harness-radar`](./projects/deepseek-harness-radar/) | ChatGPT 自动化 / Radar | DSH 官方与插件生态的每日观察、当前判断与历史 Delta |
+| [`RackTool`](./projects/racktool/) | 跨平台工具（Phase 0） | Excel 机柜管理工具的开工前置文档与项目约束 |
 
 ## 仓库结构
 
@@ -30,10 +31,14 @@
     │   ├── CHANGELOG.md
     │   ├── PRIVACY.md
     │   └── SECURITY.md
-    └── deepseek-harness-radar/
+    ├── deepseek-harness-radar/
         ├── README.md
         ├── RADAR.md
         └── history/
+    └── racktool/
+        ├── AGENTS.md
+        ├── README_PHASE0.md
+        └── docs/
 ```
 
 ## 维护约定
