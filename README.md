@@ -32,9 +32,9 @@
     │   ├── PRIVACY.md
     │   └── SECURITY.md
     ├── deepseek-harness-radar/
-        ├── README.md
-        ├── RADAR.md
-        └── history/
+    │   ├── README.md
+    │   ├── RADAR.md
+    │   └── history/
     └── racktool/
         ├── AGENTS.md
         ├── README_PHASE0.md
@@ -46,7 +46,7 @@
 - 每个工具、自动化或长期观察项目都必须拥有独立目录：`projects/<project-slug>/`。
 - 项目自身的源码、脚本、配置、README、CHANGELOG 等都留在项目目录内。
 - 仓库根目录只保留仓库级文件，例如 `README.md`、`AGENTS.md`、`.gitignore` 和 `.github/`。
-- 新项目至少提供一个 `README.md`，说明用途、依赖、运行/构建方式和当前状态。
+- 新项目至少提供一个 `README.md`，说明用途、依赖、运行/构建方式和当前状态；仅文档落库的 Phase 0 项目可暂用 `README_PHASE0.md`，并在首个开发任务中创建正式 `README.md`。
 - 公共 CI 放在 `.github/workflows/`，并使用 `paths` 限制只在对应项目变化时触发。
 - 构建产物、缓存和本地临时文件不要提交。
 

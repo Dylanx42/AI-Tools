@@ -15,7 +15,7 @@ This repository is a collection of small AI-assisted tools, automations, and lon
 
 ## Before changing files
 
-1. Read the root `README.md` and the target project's `README.md`.
+1. Read the root `README.md` and the target project's `README.md`. For a documentation-only Phase 0 project that does not have its final README yet, read `README_PHASE0.md` instead.
 2. Run `git status --short` and inspect any existing uncommitted work before editing.
 3. Do not delete, overwrite, or reset unrelated local changes.
 4. If the working tree is clean and the task is based on `main`, sync safely before editing:
@@ -51,6 +51,14 @@ This repository is a collection of small AI-assisted tools, automations, and lon
 - `history/YYYY-MM.md` stores chronological deltas.
 - Preserve the existing observation-only policy described in that project's README.
 
+### `projects/racktool/`
+
+- RackTool is currently bootstrapped from a documentation-only Phase 0 baseline.
+- Read `projects/racktool/AGENTS.md` before any RackTool task; its requirements, architecture documents, roadmap, and accepted ADRs are the project contract.
+- Keep `README_PHASE0.md` until the first development task creates the actual project `README.md`; do not rename it as a bootstrap shortcut.
+- Do not infer real workbook layouts from screenshots. Until Golden Sample `.xlsx` files are supplied, use only explicitly authorized synthetic fixtures.
+- Keep all RackTool-specific files under `projects/racktool/` and do not create a nested Git repository.
+
 ## Adding a new project
 
-Create `projects/<project-slug>/README.md` first, then keep all project-specific files beneath that directory. Update the root README project table when the new project becomes part of the maintained collection.
+Create `projects/<project-slug>/README.md` first, then keep all project-specific files beneath that directory. A documentation-only Phase 0 package may temporarily provide `README_PHASE0.md` when its accepted project contract explicitly defers the final README to the first development task. Update the root README project table when the new project becomes part of the maintained collection.
