@@ -1,83 +1,58 @@
-# Codex 额度栏
+# AI Tools
 
-轻量、原生的 macOS 菜单栏 Codex 额度查看器。它直接通过本机官方 `codex app-server` 读取 ChatGPT Codex 的额度窗口，不解析登录文件，也不需要浏览器 Cookie。
+个人 AI 小工具、自动化与长期观察项目集合。
 
-## 功能
+这个仓库采用 **一个项目一个自包含目录** 的方式维护。以后新增工具时，统一放到 `projects/<project-slug>/`，不要再把项目源码、构建脚本或项目文档散落在仓库根目录。
 
-- 菜单栏直接显示 5 小时和 7 天窗口的剩余百分比。
-- 点击后查看已用比例、精确重置时间、套餐、Credits 和可用重置券。
-- 智能刷新：额度变化或接近阈值时每 30 秒，短期稳定时每 60 秒，持续稳定后每 2 分钟。
-- 低电量模式降至 5 分钟；连续失败时按 1、2、5 分钟退避。
-- Mac 唤醒后立即刷新；打开菜单且数据超过 20 秒时也会立即刷新。
-- 无 Dock 图标、无第三方运行时依赖。
+## 当前项目
 
-## 工作方式
+| 项目 | 类型 | 说明 |
+| --- | --- | --- |
+| [`codex-quota-bar`](./projects/codex-quota-bar/) | macOS 小工具 | 原生菜单栏 Codex 额度查看器 |
+| [`deepseek-harness-radar`](./projects/deepseek-harness-radar/) | ChatGPT 自动化 / Radar | DSH 官方与插件生态的每日观察、当前判断与历史 Delta |
 
-应用启动本机 `codex app-server`，完成 JSON-RPC 初始化后调用：
-
-```json
-{"method":"account/rateLimits/read","id":1}
-```
-
-读取成功后立即结束该辅助进程。应用不会调用模型，不消耗对话 Token。
-
-## 隐私
-
-- 不读取浏览器 Cookie。
-- 不解析 `~/.codex/auth.json`。
-- 不保存或上传访问令牌、完整额度响应、提示词或聊天记录。
-- 只使用 `account/rateLimits/read` 返回的额度窗口、套餐、Credits 和重置券数量。
-
-完整边界见 [PRIVACY.md](PRIVACY.md)。
-
-## 要求
-
-- macOS 13 Ventura 或更高版本。
-- 已安装并登录 Codex CLI。
-- 默认查找 Homebrew、`~/.local/bin` 和 Codex.app 常见安装位置。
-
-## 构建
-
-不需要 Xcode 工程或第三方依赖，安装 Command Line Tools 后执行：
-
-```sh
-chmod +x build.sh
-./build.sh
-```
-
-产物：`dist/Codex 额度栏.app`
-
-构建脚本使用本机 ad-hoc 签名，适合本机自用。对外分发需要 Apple Developer ID 签名与公证。
-
-## 安装
-
-```sh
-ditto "dist/Codex 额度栏.app" "/Applications/Codex 额度栏.app"
-open -a "/Applications/Codex 额度栏.app"
-```
-
-## 验证
-
-```sh
-plutil -lint Info.plist
-codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
-```
-
-## 项目结构
+## 仓库结构
 
 ```text
 .
-├── Sources/main.m
-├── Info.plist
-├── build.sh
+├── AGENTS.md
 ├── README.md
-├── PRIVACY.md
-├── SECURITY.md
-└── CHANGELOG.md
+├── .gitignore
+├── .github/
+│   └── workflows/
+│       └── codex-quota-bar.yml
+└── projects/
+    ├── codex-quota-bar/
+    │   ├── README.md
+    │   ├── Sources/
+    │   ├── Info.plist
+    │   ├── build.sh
+    │   ├── CHANGELOG.md
+    │   ├── PRIVACY.md
+    │   └── SECURITY.md
+    └── deepseek-harness-radar/
+        ├── README.md
+        ├── RADAR.md
+        └── history/
 ```
 
-## 当前限制
+## 维护约定
 
-- 当前仅显示一个 Codex 额度桶的主/次窗口。
-- 不包含自动更新器、开机自启或多 Provider 支持。
-- Bundle 为本机构建；仓库本身不提供 Apple 公证产物。
+- 每个工具、自动化或长期观察项目都必须拥有独立目录：`projects/<project-slug>/`。
+- 项目自身的源码、脚本、配置、README、CHANGELOG 等都留在项目目录内。
+- 仓库根目录只保留仓库级文件，例如 `README.md`、`AGENTS.md`、`.gitignore` 和 `.github/`。
+- 新项目至少提供一个 `README.md`，说明用途、依赖、运行/构建方式和当前状态。
+- 公共 CI 放在 `.github/workflows/`，并使用 `paths` 限制只在对应项目变化时触发。
+- 构建产物、缓存和本地临时文件不要提交。
+
+## 新增项目
+
+推荐流程：
+
+```sh
+mkdir -p projects/my-new-tool
+```
+
+然后把该项目的全部文件放进这个目录，并补齐 `README.md`。如果需要 GitHub Actions，再在 `.github/workflows/` 新建与项目同名的工作流。
+
+给 Codex 或其他代码 Agent 下任务前，优先让它先阅读根目录 [`AGENTS.md`](./AGENTS.md)。

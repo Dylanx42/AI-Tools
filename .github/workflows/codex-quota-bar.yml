@@ -1,0 +1,32 @@
+name: codex-quota-bar
+
+on:
+  push:
+    paths:
+      - "projects/codex-quota-bar/**"
+      - ".github/workflows/codex-quota-bar.yml"
+  pull_request:
+    paths:
+      - "projects/codex-quota-bar/**"
+      - ".github/workflows/codex-quota-bar.yml"
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: projects/codex-quota-bar
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate plist
+        run: plutil -lint Info.plist
+      - name: Build
+        run: ./build.sh
+      - name: Verify bundle
+        run: codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
+      - name: Upload app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-quota-bar-macos
+          path: "projects/codex-quota-bar/dist/Codex 额度栏.app"
