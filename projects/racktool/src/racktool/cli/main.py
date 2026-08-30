@@ -78,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="apply the write-back after backup, temporary write, reload, and validation",
     )
+    gui_parser = subparsers.add_parser("gui", help="open the local RackTool cockpit")
+    gui_parser.add_argument("workbook", type=Path, nargs="?")
     return parser
 
 
@@ -103,7 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _project_command(args)
         if args.command == "sync":
             return _sync_command(args)
-    except (FileNotFoundError, OSError, ValueError) as error:
+        if args.command == "gui":
+            from racktool.gui.window import launch
+
+            return launch(args.workbook)
+    except (FileNotFoundError, OSError, ValueError, RuntimeError) as error:
         parser.exit(2, f"racktool: error: {error}\n")
     return 1
 

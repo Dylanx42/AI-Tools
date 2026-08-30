@@ -5,8 +5,8 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 
 ## 当前状态
 
-**V0.4 Safe Sync 已通过本地自动化门禁**。V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责稳定身份，
-V0.4 增加带备份、临时文件、重载校验和失败保护的设备移动写回：
+**V0.5 Local GUI 已通过本地自动化门禁**。V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责稳定身份，
+V0.4 负责安全写回，V0.5 增加不嵌入 Agent 的本地驾驶舱：
 
 - 按原始顺序列出工作表；
 - 提取非空单元格、坐标、数据类型和稳定的常见样式签名；
@@ -32,6 +32,13 @@ ruff check .
 mypy src
 ```
 
+本地驾驶舱需要额外安装 Qt：
+
+```bash
+python -m pip install -e '.[gui]'
+racktool gui path/to/rack-layout.xlsx
+```
+
 ## CLI
 
 ```bash
@@ -44,6 +51,7 @@ racktool project import path/to/rack-layout.xlsx path/to/project.sqlite
 racktool project rescan path/to/rack-layout.xlsx path/to/project.sqlite
 racktool sync move path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID RACK_ID START_U END_U
 racktool sync move --commit path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID RACK_ID START_U END_U
+racktool gui path/to/rack-layout.xlsx
 # 或
 python -m racktool inspect path/to/workbook.xlsx
 python -m racktool analyze path/to/rack-layout.xlsx
@@ -54,7 +62,7 @@ inspect/analyze/profile/project 默认只读取工作簿；`sync move --commit` 
 
 ## 明确不支持
 
-当前不包含资产表对账、GUI、Agent/云 API、Shape/SmartArt、VBA、Office COM，或跨 Sheet 设备移动。
+当前不包含资产表对账、Agent/云 API、Shape/SmartArt、VBA、Office COM，或跨 Sheet 设备移动。
 
 项目约束和后续设计见[产品需求](docs/product/requirements.md)、
 [架构总览](docs/architecture/overview.md)、[数据模型](docs/architecture/data-model.md)和
@@ -65,4 +73,4 @@ inspect/analyze/profile/project 默认只读取工作簿；`sync move --commit` 
 两类真实布局已在 Git 忽略的 `samples/private/` 完成人工异常确认、源文件修正、结构审计和
 Sheet 级 expected JSON 回归。私有材料不会进入 Git；以后提交公开回归样本前仍需脱敏。
 
-自动化 V0.4 已通过。后续 GUI/Skill 工作必须保持 V0.1 到 V0.4 regression 通过。
+自动化 V0.5 已通过。后续未知布局工作流和 Skill 必须保持 V0.1 到 V0.5 regression 通过。

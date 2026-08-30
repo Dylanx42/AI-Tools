@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "racktool"
 version = "0.1.0"
-description = "Deterministic XLSX structure scanner for RackTool"
+description = "Offline-first Excel rack management for RackTool"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = [
+  "PySide6>=6.6,<7",
+]
 dev = [
   "mypy>=1.10,<2",
   "pytest>=8,<9",
@@ -24,6 +27,7 @@ dev = [
 
 [project.scripts]
 racktool = "racktool.cli.main:main"
+racktool-gui = "racktool.gui.window:launch_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
