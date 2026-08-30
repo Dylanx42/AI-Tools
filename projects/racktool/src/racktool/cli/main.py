@@ -6,7 +6,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from racktool.core import scan_workbook
+from racktool.core import analyze_workbook, scan_workbook
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,6 +16,10 @@ def build_parser() -> argparse.ArgumentParser:
         "inspect", help="emit a deterministic structural summary (not rack detection)"
     )
     inspect_parser.add_argument("workbook", type=Path)
+    analyze_parser = subparsers.add_parser(
+        "analyze", help="emit explainable U-axis, rack, and device candidates"
+    )
+    analyze_parser.add_argument("workbook", type=Path)
     return parser
 
 
@@ -24,8 +28,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "inspect":
-            result = scan_workbook(args.workbook)
-            print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+            scan_result = scan_workbook(args.workbook)
+            print(json.dumps(scan_result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        if args.command == "analyze":
+            analysis_result = analyze_workbook(args.workbook)
+            print(
+                json.dumps(
+                    analysis_result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True
+                )
+            )
             return 0
     except (FileNotFoundError, OSError, ValueError) as error:
         parser.exit(2, f"racktool: error: {error}\n")
