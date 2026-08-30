@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [`codex-quota-bar`](./projects/codex-quota-bar/) | macOS 小工具 | 原生菜单栏 Codex 额度查看器 |
 | [`deepseek-harness-radar`](./projects/deepseek-harness-radar/) | ChatGPT 自动化 / Radar | DSH 官方与插件生态的每日观察、当前判断与历史 Delta |
-| [`RackTool`](./projects/racktool/) | 跨平台工具（V0.1 验证中） | Excel 机柜管理工具；Reader 已实现，真实 Golden Sample 验收待确认 |
+| [`RackTool`](./projects/racktool/) | 跨平台工具（V0.2 已通过） | Excel 机柜管理工具；Reader 与 YAML Profile 已通过私有门禁 |
 
 ## 仓库结构
 

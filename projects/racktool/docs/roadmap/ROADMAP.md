@@ -4,9 +4,12 @@
 
 - Phase 0：PASS，详见 `docs/gates/PHASE0.md`。
 - V0.1 Reader：PASS，详见 `docs/gates/V0.1.md`。
+- V0.2 Profile：PASS，详见 `docs/gates/V0.2.md`。
 - 两类真实私有布局已冻结 Sheet 级 expected JSON、源文件 Hash 和持久验收记录；本地 Golden
   regression 与完整结构审计通过。
-- 当前阶段：允许开始 V0.2 Profile；后续门禁必须持续复跑 V0.1 regression。
+- 通用双轴 Profile 正确识别第一类真实布局；混合轴 Profile 正确识别第二类真实布局；错误或冲突
+  Profile 会被拒绝。
+- 当前阶段：允许开始 V0.3 Identity & Mapping；后续门禁必须持续复跑 V0.1 和 V0.2 regression。
 
 ## 1. 总体策略
 

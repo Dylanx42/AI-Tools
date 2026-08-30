@@ -1,0 +1,26 @@
+schema_version: 1
+profile_id: generic-mixed-axis
+name: Generic mixed paired and edge-axis rack layout
+
+match:
+  min_confidence: 1.0
+  review_confidence: 0.5
+  allow_multiple_sheets: false
+  require_issue_free: true
+
+rack:
+  title:
+    mode: merged_cell_above_u_axis
+  height:
+    mode: infer_from_u_axis
+
+u_axis:
+  direction: descending
+  pairing: mixed
+  allowed_heights: [10, 12, 42, 47, 48, 53]
+
+device_area:
+  mode: between_or_edge
+
+text:
+  ignore_exact: []

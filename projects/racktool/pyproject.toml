@@ -19,6 +19,7 @@ dev = [
   "pytest>=8,<9",
   "ruff>=0.6,<1",
   "types-openpyxl>=3.1,<4",
+  "types-PyYAML>=6,<7",
 ]
 
 [project.scripts]
@@ -26,6 +27,9 @@ racktool = "racktool.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+racktool = ["profiles/*.yaml"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
