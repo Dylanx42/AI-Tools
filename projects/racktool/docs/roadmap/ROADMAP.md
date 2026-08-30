@@ -3,10 +3,10 @@
 ## 当前门禁状态（2026-08-31）
 
 - Phase 0：PASS，详见 `docs/gates/PHASE0.md`。
-- V0.1 Reader：implementation complete / validation blocked，详见 `docs/gates/V0.1.md`。
-- 当前阻塞：真实私有机柜图已有两类布局和实际分析结果，但尚无脱敏且人工确认的 expected JSON；
-  资产表交叉对账仍有未确认差异。
-- 门禁决定：不得开始 V0.2 Profile，直到 V0.1 Gate Report 更新为 PASS。
+- V0.1 Reader：PASS，详见 `docs/gates/V0.1.md`。
+- 两类真实私有布局已冻结 Sheet 级 expected JSON、源文件 Hash 和持久验收记录；本地 Golden
+  regression 与完整结构审计通过。
+- 当前阶段：允许开始 V0.2 Profile；后续门禁必须持续复跑 V0.1 regression。
 
 ## 1. 总体策略
 

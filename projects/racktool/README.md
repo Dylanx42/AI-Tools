@@ -5,7 +5,7 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 
 ## 当前状态
 
-当前是 **V0.1 Reader 的候选检测阶段**。目前提供只读 `.xlsx` Workbook Scanner 和
+**V0.1 Reader 已通过本地私有 Golden 门禁**。目前提供只读 `.xlsx` Workbook Scanner 和
 基于结构证据的候选分析：
 
 - 按原始顺序列出工作表；
@@ -52,7 +52,9 @@ Shape/SmartArt、VBA、Office COM、冲突检查或任何形式的 Excel 写回�
 [架构总览](docs/architecture/overview.md)、[数据模型](docs/architecture/data-model.md)和
 [路线图](docs/roadmap/ROADMAP.md)。
 
-## Golden Samples 阻塞项
+## Golden Samples
 
-真实工作簿可以放在 Git 忽略的 `samples/private/` 做本地验收。提交公开回归样本前仍需脱敏，
-并补齐人工确认的机柜数、设备数和 Rack/U 期望结果；在此之前，候选分析不升级为业务验收结论。
+两类真实布局已在 Git 忽略的 `samples/private/` 完成人工异常确认、源文件修正、结构审计和
+Sheet 级 expected JSON 回归。私有材料不会进入 Git；以后提交公开回归样本前仍需脱敏。
+
+当前允许按路线图开始 V0.2 Profile，但任何后续阶段都必须保持 V0.1 regression 通过。
