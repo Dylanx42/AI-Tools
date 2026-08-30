@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "racktool"
+version = "0.1.0"
+description = "Deterministic XLSX structure scanner for RackTool"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["openpyxl>=3.1,<4"]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.10,<2",
+  "pytest>=8,<9",
+  "ruff>=0.6,<1",
+  "types-openpyxl>=3.1,<4",
+]
+
+[project.scripts]
+racktool = "racktool.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["racktool"]
