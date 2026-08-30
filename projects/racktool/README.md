@@ -5,8 +5,8 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 
 ## 当前状态
 
-**V0.2 Profile 已通过本地私有门禁**。V0.1 Reader 继续提供只读 `.xlsx` Workbook Scanner 和
-基于结构证据的候选分析；V0.2 增加 YAML 布局 Profile：
+**V0.4 Safe Sync 已通过本地自动化门禁**。V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责稳定身份，
+V0.4 增加带备份、临时文件、重载校验和失败保护的设备移动写回：
 
 - 按原始顺序列出工作表；
 - 提取非空单元格、坐标、数据类型和稳定的常见样式签名；
@@ -40,18 +40,21 @@ racktool analyze path/to/rack-layout.xlsx
 racktool profile validate path/to/profile.yaml
 racktool profile match path/to/rack-layout.xlsx path/to/profile.yaml
 racktool profile apply path/to/rack-layout.xlsx path/to/profile.yaml
+racktool project import path/to/rack-layout.xlsx path/to/project.sqlite
+racktool project rescan path/to/rack-layout.xlsx path/to/project.sqlite
+racktool sync move path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID RACK_ID START_U END_U
+racktool sync move --commit path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID RACK_ID START_U END_U
 # 或
 python -m racktool inspect path/to/workbook.xlsx
 python -m racktool analyze path/to/rack-layout.xlsx
 ```
 
 命令把 UTF-8 JSON 写到标准输出。输入必须是现有的 `.xlsx` 文件；扫描过程只读取工作簿内容，
-不会保存、写回或修改源文件。
+inspect/analyze/profile/project 默认只读取工作簿；`sync move --commit` 才会在备份和校验后写回。
 
 ## 明确不支持
 
-当前不包含已确认的设备身份、Mapping、资产表对账、数据库、GUI、Agent/云 API、
-Shape/SmartArt、VBA、Office COM、冲突检查或任何形式的 Excel 写回。
+当前不包含资产表对账、GUI、Agent/云 API、Shape/SmartArt、VBA、Office COM，或跨 Sheet 设备移动。
 
 项目约束和后续设计见[产品需求](docs/product/requirements.md)、
 [架构总览](docs/architecture/overview.md)、[数据模型](docs/architecture/data-model.md)和
@@ -62,5 +65,4 @@ Shape/SmartArt、VBA、Office COM、冲突检查或任何形式的 Excel 写回�
 两类真实布局已在 Git 忽略的 `samples/private/` 完成人工异常确认、源文件修正、结构审计和
 Sheet 级 expected JSON 回归。私有材料不会进入 Git；以后提交公开回归样本前仍需脱敏。
 
-当前允许按路线图开始 V0.3 Identity & Mapping，但任何后续阶段都必须保持 V0.1 和 V0.2
-regression 通过。
+自动化 V0.4 已通过。后续 GUI/Skill 工作必须保持 V0.1 到 V0.4 regression 通过。

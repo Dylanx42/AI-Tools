@@ -10,5 +10,6 @@
 6. `ADR-006-monorepo-boundary.md` — AI-Tools monorepo 项目边界
 7. `ADR-007-open-source-offline-first.md` — 开源/内部共享、Offline-first
 8. `ADR-008-safe-write-transaction.md` — XLSX 安全事务式写回
+9. `ADR-009-sqlite-project-state.md` — SQLite 保存本地项目身份与 Mapping
 
 架构方向发生变化时，应新增 ADR 或明确 supersede 旧 ADR。

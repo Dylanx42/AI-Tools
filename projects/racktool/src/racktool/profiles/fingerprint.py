@@ -6,7 +6,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from racktool.core import analyze_workbook, scan_workbook
+from racktool.core.analyzer import analyze_workbook
+from racktool.core.workbook import scan_workbook
 from racktool.models.analysis import SheetAnalysis, WorkbookAnalysis
 from racktool.profiles.schema import WorkbookFingerprint
 

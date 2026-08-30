@@ -6,4 +6,4 @@
 私有工作簿只使用不泄露业务内容的代号和统计结果；原始数据、实际分析 JSON 和待确认清单保留在
 Git 忽略的 `samples/private/`。
 
-当前已通过：Phase 0、V0.1 Reader、V0.2 Profile。
+当前已通过：Phase 0、V0.1 Reader、V0.2 Profile、V0.3 Identity & Mapping、V0.4 Safe Sync。

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from racktool.core import analyze_workbook
+from racktool.core.analyzer import analyze_workbook
 from racktool.models.analysis import SheetAnalysis, WorkbookAnalysis
 from racktool.profiles.fingerprint import fingerprint_workbook
 from racktool.profiles.matcher import match_profile, select_profile

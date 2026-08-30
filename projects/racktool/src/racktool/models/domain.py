@@ -27,6 +27,18 @@ class Rack:
     rack_id: str
     rack_name: str
     height_u: int
+    source_sheet: str | None = None
+    bounds: CellRange | None = None
+    profile_id: str | None = None
+    confidence: float | None = None
+    start_row: int | None = None
+    end_row: int | None = None
+    left_axis_column: int | None = None
+    right_axis_column: int | None = None
+    device_columns: list[int] = field(default_factory=list)
+    direction: str | None = None
+    u_to_row: dict[int, int] = field(default_factory=dict)
+    title_range: str | None = None
 
     def __post_init__(self) -> None:
         if self.height_u < 1:
@@ -42,6 +54,8 @@ class Device:
     display_text: str
     canonical_name: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
+    confidence: float | None = None
+    style_signature: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
