@@ -2,7 +2,7 @@
 
 > **用途**：长期跟踪 DeepSeek Harness 官方与插件生态；本文件只维护“当前状态”，每日历史看 `history/YYYY-MM.md`。  
 > **当前策略**：只观察 / 比较 / 记录，不安装、下载或运行第三方插件。  
-> **最后整理**：2026-08-28  
+> **最后整理**：2026-08-30  
 > **迁移到 AI-Tools**：2026-08-29
 
 ## 状态定义
@@ -21,7 +21,7 @@
 | Anchored Standard / 动态 Tool Schema | 仍是最重要的 DSH 推理优化研究线之一；通过控制模型在不同阶段看到的 Tool Schema 影响 reasoning trajectory | 实验性 | Prefab seeding / tool unlock 可靠性已补；新增已知行为：bare Minimal persona 在身份问题上可能回落到训练先验，出现 identity drift，但一行 identity anchor 可修且不破坏机械 anchor 检查 | 是否做真实任务 trajectory A/B；是否跨模型复现；identity anchor 是否进入 opt-in 配置 |
 | dsh-routing-suite | 从 Anchoring 进一步走向“任务分类 → persona/reasoning 路由 → 近距离 Context 注入” | 实验性 | router 与 runtime injection 已合并并通过项目自测 | 正式发布、真实 ablation、是否过拟合 benchmark |
 | dsh-mcp-lazy | 把动态 Tool Schema 应用到 MCP：按需暴露具体 MCP 工具，降低常驻 Schema 负担 | 可尝鲜 | 已验证多版 DSH；公开实验显示 Tool Schema token 明显下降 | 0.1.2 alpha 兼容、激活准确率、与 MCP Manager 对比 |
-| dsh-context | 已从单 Session Context Inspector 扩展成多 Agent Context / 拓扑可观察层 | 可日常尝鲜 | 0.34.0 新增 Agent Network：任意深度祖先/Subagent 实时拓扑、context ring、状态与 Session 跳转 | 是否成为 Anchoring / Router / Agent Teams 的标准观测层；0.1.2 alpha 兼容 |
+| dsh-context | 已从单 Session Context Inspector 扩展成多 Agent Context / 拓扑可观察层，并开始主动兼容 DSH projection contract 代际变化 | 可日常尝鲜 | 当前 0.38.3；已用双 projection contract 覆盖 0.1.0-rc.7→0.1.2-alpha.1，并修复 alpha 下 `undefined` projection value 导致新 Session 推送失败的问题 | 继续验证 0.1.2 alpha 的 Session/projection 后续变化；是否成为 Anchoring / Router / Agent Teams 的标准观测层 |
 | Minimal Harness / byte-stable prompt 类 | 通过少工具、稳定前缀、压缩输出降低 Harness 干扰与 cache 成本 | 实验性 | 已出现 ClawCodex 等 DeepSeek 特化实验；identity drift 说明极简 persona 也存在新的行为边界 | 是否形成稳定 DSH 插件与可复现 benchmark；如何在极简与身份/约束锚定间平衡 |
 
 ## 🔥 P0｜Agent / Runtime
@@ -37,7 +37,7 @@
 
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
-| 官方 DSH 0.1.2 alpha | 官方主线重新高速演进；这次不只是 Provider/UI，而是 Session persistence、API transport、tool presentation 等底层结构变化 | **Alpha** | 2026-08-27 发布 `0.1.2-alpha.1`；`code-mode` 重命名为 `PTC mode`；Session 读路径改为 fail-closed 的 known-event vocabulary，并移除旧 `ignorable` 机制；ApiProxy transport 被移除 | 第三方插件自定义 durable event 的正式注册/迁移机制；SESSION_FORMAT_VERSION v0→v1；alpha 到 RC 的兼容窗口 |
+| 官方 DSH 0.1.2 alpha | 官方主线重新高速演进；底层结构变化已进入插件兼容验证期，但 alpha.1 当前仍是 GitHub tag/source 状态而非 npm 可安装发布 | **Alpha** | 2026-08-27 `dsh-v0.1.2-alpha.1` tag；PTC mode、Session known-event fail-closed、ApiProxy transport 移除；截至 2026-08-30 官方主仓无更新提交，npm `latest/next` 仍停在 0.1.1-rc.2 | 第三方 durable event 正式注册/迁移机制；SESSION_FORMAT_VERSION；alpha 后续 tag 是否真正进入 npm 发布通道 |
 | 官方 DeepSeek Provider | 官方持续把 Provider、多模态、附件能力收进主干 | Alpha / RC 过渡 | 0.1.1 统一 Vision / Attachment / Files API；0.1.2 alpha 进入更大范围底层重构 | 跨 Gateway thinking、Vision 稳定化、alpha 兼容 |
 | Codex / ChatGPT OAuth Provider | DSH 直接使用 Codex / ChatGPT 模型通道 | 早期实验 | 社区已出现 dsh-codex-connect 类产品化尝试 | 0.1.2 alpha 兼容、OAuth 稳定性、模型目录、与 pi-ai 能力边界 |
 | 多模型 Router | 根据任务复杂度切模型 / Provider | 早期实验 | 已出现 tier-router / routing-suite 等方向 | fallback、成本/质量数据、真实自动路由价值 |
@@ -46,7 +46,7 @@
 
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
-| dsh-market | 已从“插件商店”进入插件生命周期与恢复基础设施 | 可日常使用 | 1.35.0 修复“验证触发卸载后留下孤儿 bundle 行导致整个 profile 无法启动”；新增跨重启持久化、脱敏、限额日志；更新后核验实际落盘版本；镜像 GitHub 安装继续补 integrity-safe | 0.1.2 alpha 兼容；Public Update API 稳定化；签名/供应链；兼容矩阵 |
+| dsh-market | 已从“插件商店”进入插件生命周期、诊断与可恢复更新基础设施 | 可日常使用 | 1.38.0 修复“pnpm add 已替换包内容但返回失败”时旧版只恢复 manifest、导致被拒绝的新版本仍实际运行的问题；现在精确恢复旧版本/commit 并回读验证；同时恢复对 DSH alpha 的 real-host E2E | 0.1.2 alpha 实际兼容矩阵；Public Update API 稳定化；签名/供应链；失败恢复是否覆盖更多包管理边界 |
 | Compatibility / upstream-radar | 专门检测 DSH 上游升级导致插件失效 | 实验性 | 0.1.2 alpha 的 Session/API 变更让这条线重要性进一步上升 | 是否形成 0.1.1→0.1.2 的真实 plugin compatibility matrix；与 Market 集成 |
 | Doctor / Plugin Clinic | 插件故障诊断与恢复 | 可尝鲜 | 已出现把插件启动失败摘要送回 DSH Session 做辅助排障的闭环 | 0.1.2 alpha 兼容、自动修复边界、版本冲突诊断、与 Market 整合 |
 | Index / Profile / Distribution | 把 Harness + Plugins 组合成 Agent Profile / Distribution | 早期 | 社区开始形成统一索引、Profile、发行版路线 | 版本固定、升级/回滚、组合兼容性，尤其跨 0.1.2 alpha |
@@ -66,7 +66,7 @@
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
 | DSH-better-sidebar | 已从 UI 插件变成 Web 工作台基础设施 | 可日常尝鲜 | Side Chat、Pinned Terminal、Terminal park、Git/File/Subagent、第三方页面注册 | 0.1.2 alpha 兼容；Session branching 与多工作区工作流 |
-| dsh-TUI | 当前较成熟的 DSH TUI 路线；开始显著补 Session 生命周期与供应链安全 | 可日常尝鲜 | compaction 与 model/resume/rewind/fork/new 串行化；便携更新链补 SHA256、限额、解压树/缓存守卫 | 0.1.2 alpha 兼容、长期 Session 可靠性、更新链签名 |
+| dsh-TUI | 当前较成熟的 DSH TUI 路线，正从独立客户端继续向“可承载第三方插件的前端 Runtime”演进 | 可日常尝鲜 | 新增公开 `./api` / `./test-utils`、`ctx.tuiToast`、动态 permission preset registry 与 runtime theme plugin；同时保留 Session 生命周期与供应链安全保护 | 这些插件接缝的稳定性分级是否兑现；0.1.2 alpha 兼容；多 Agent/第三方插件长期运行边界 |
 | dsh-web-ui | Remote / Git / SSH / Doctor / Task UI 综合增强 | 可尝鲜 | Remote 配对、model catalog、Recovery、Doctor 持续增强 | 0.1.2 alpha 兼容、复杂度、安全 |
 | Desktop wrappers | 把官方 Harness / Web 做成桌面入口 | 可尝鲜 | 已出现签名/公证、Provider onboarding、Session/Profile | 0.1.2 alpha 兼容；官方是否推出原生 Desktop |
 | dsh-mobile | 移动端安全入口 | Alpha | HTTPS origin、配对、证书 pinning、LAN discovery | 0.1.2 alpha 兼容、安全审计 |
@@ -88,8 +88,8 @@
 | 2026-08-13 | 0.1.0 RC 系列快速公开 | npm family / plugin 生态开始明显加速 |
 | 2026-08-19 | 0.1.0-rc.8 | 官方 experimental Agent Teams；reasoning_content 相关修复 |
 | 2026-08-21 | 0.1.1-rc.1 / rc.2 | Vision、Attachment、Files API 向统一 Harness 管线发展 |
-| 2026-08-27 | **0.1.2-alpha.1** | 官方进入新一轮底层重构：PTC mode、Session known-event fail-closed、ApiProxy transport 移除；第三方插件兼容重新成为核心问题 |
-| 当前 | Session format / plugin event surface | durable custom event 缺正式注册/迁移面；社区已公开集中讨论 0.1.2 alpha 下的 writer 兼容问题 |
+| 2026-08-27 | **0.1.2-alpha.1** | 官方进入新一轮底层重构：PTC mode、Session known-event fail-closed、ApiProxy transport 移除；第三方插件兼容重新成为核心问题；当前为 GitHub tag/source，尚未进入 npm 发布通道 |
+| 当前 | Session format / plugin event surface | durable custom event 缺正式注册/迁移面；社区继续提出 external event producer / per-subagent cwd 等 extension contract 需求，但尚未被上游正式采纳 |
 
 ## 当前最值得长期盯的对象
 
@@ -110,8 +110,8 @@ DSH 生态已经明显分成五层：**模型表现层 → Agent Runtime → Pro
 
 - Harness 从固定工具集转向 **动态 Tool Schema / 动态 Context / 动态 reasoning 路由**；
 - 多 Agent 从“能并行跑”转向 **执行前计划审查、路由治理与拓扑可观察性**；
-- 插件生态从“能安装”转向 **更新 API、兼容性、诊断、自愈、回滚与供应链安全**；
-- 官方 `0.1.2-alpha.1` 已重新打开 **Session persistence / plugin ABI 兼容** 这一核心问题，近期所有重点插件都需要重新验证兼容边界。
+- 插件生态从“能安装”转向 **更新 API、兼容性、诊断、自愈、精确回滚与供应链安全**；
+- 官方 `0.1.2-alpha.1` 已重新打开 **Session persistence / plugin ABI 兼容** 这一核心问题，而社区工具开始主动为 alpha 建立跨版本适配和真实宿主 E2E。
 
 ---
 
