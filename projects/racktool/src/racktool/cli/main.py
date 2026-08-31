@@ -61,10 +61,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     project_parser = subparsers.add_parser("project", help="import or rescan stable rack/device identities")
     project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
-    import_parser = project_subparsers.add_parser("import", help="create a SQLite project from a workbook")
+    import_parser = project_subparsers.add_parser(
+        "import",
+        help="create a SQLite project from a workbook",
+        allow_abbrev=False,
+    )
     import_parser.add_argument("workbook", type=Path)
     import_parser.add_argument("database", type=Path)
-    import_parser.add_argument("--profile-id", dest="profile_id")
+    import_parser.add_argument(
+        "--profile",
+        type=Path,
+        help="load and persist a validated YAML layout Profile",
+    )
     rescan_parser = project_subparsers.add_parser("rescan", help="rescan a workbook against an existing SQLite project")
     rescan_parser.add_argument("workbook", type=Path)
     rescan_parser.add_argument("database", type=Path)
@@ -159,10 +167,11 @@ def _profile_command(args: argparse.Namespace) -> int:
 
 def _project_command(args: argparse.Namespace) -> int:
     if args.project_command == "import":
+        profile = load_profile(args.profile) if args.profile is not None else None
         project = import_project(
             args.workbook,
             args.database,
-            profile_id=args.profile_id,
+            profile=profile,
         )
         print(json.dumps(project.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0

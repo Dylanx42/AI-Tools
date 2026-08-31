@@ -13,6 +13,7 @@ from racktool.core.project import (
 from racktool.core.sync import WritePlan, WriteResult, apply_writeback
 from racktool.models.project import RackProject, RescanResult
 from racktool.persistence import load_project, save_project
+from racktool.profiles.schema import LayoutProfile
 
 
 def _validate_database(path: Path) -> None:
@@ -46,11 +47,11 @@ def import_project(
     workbook: Path,
     database: Path,
     *,
-    profile_id: str | None = None,
+    profile: LayoutProfile | None = None,
 ) -> RackProject:
     source = normalize_path(workbook)
     database_path = normalize_path(database)
-    project = import_workbook(source, profile_id=profile_id)
+    project = import_workbook(source, profile=profile)
     errors = project_error_conflicts(project)
     if errors:
         raise ValueError("; ".join(item.message for item in errors))

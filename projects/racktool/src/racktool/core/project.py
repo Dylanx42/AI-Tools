@@ -24,7 +24,14 @@ from racktool.models.project import (
     RescanResult,
     SourceMapping,
 )
+from racktool.profiles import analyze_profiled_workbook
 from racktool.profiles.fingerprint import fingerprint_workbook
+from racktool.profiles.schema import LayoutProfile, ProfileError
+from racktool.profiles.storage import (
+    load_stored_profile,
+    metadata_with_profile,
+    normalize_profile,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,6 +257,16 @@ def _make_mapping(
 
 def validate_project(project: RackProject) -> list[IdentityConflict]:
     conflicts: list[IdentityConflict] = []
+    try:
+        load_stored_profile(project.profile_id, project.metadata)
+    except ProfileError as error:
+        conflicts.append(
+            _conflict(
+                "invalid-stored-profile",
+                "Project Profile semantics are missing, damaged, or inconsistent",
+                evidence=[str(error)],
+            )
+        )
     racks_by_id = {item.rack_id: item for item in project.racks}
     devices_by_id = {item.device_id: item for item in project.devices}
     if len(racks_by_id) != len(project.racks):
@@ -496,10 +513,12 @@ def _build_from_analysis(
     analysis: WorkbookAnalysis,
     *,
     project_id: str,
-    profile_id: str | None,
+    profile: LayoutProfile | None,
     id_factory: IdFactory,
 ) -> RackProject:
     source = normalize_path(workbook_path)
+    normalized_profile = normalize_profile(profile) if profile is not None else None
+    profile_id = normalized_profile.profile_id if normalized_profile is not None else None
     fingerprint = fingerprint_workbook(source, analysis)
     rack_observations, device_observations, observation_conflicts = _observations(analysis)
     rack_ids = {
@@ -565,7 +584,10 @@ def _build_from_analysis(
         placements=placements,
         mappings=mappings,
         conflicts=[],
-        metadata={"schema_version": 1},
+        metadata=metadata_with_profile(
+            {"schema_version": 1},
+            normalized_profile,
+        ),
     )
     return _with_validation(
         project,
@@ -576,16 +598,22 @@ def _build_from_analysis(
 def import_workbook(
     workbook_path: Path,
     *,
-    profile_id: str | None = None,
+    profile: LayoutProfile | None = None,
     id_factory: IdFactory | None = None,
 ) -> RackProject:
     source = normalize_path(workbook_path)
     factory = id_factory or default_id_factory
+    normalized_profile = normalize_profile(profile) if profile is not None else None
+    analysis = (
+        analyze_profiled_workbook(source, normalized_profile)
+        if normalized_profile is not None
+        else analyze_workbook(source)
+    )
     return _build_from_analysis(
         source,
-        analyze_workbook(source),
+        analysis,
         project_id=factory("PRJ"),
-        profile_id=profile_id,
+        profile=normalized_profile,
         id_factory=factory,
     )
 
@@ -874,7 +902,12 @@ def _rescan_from_analysis(
     *,
     id_factory: IdFactory,
 ) -> RescanResult:
-    analysis = analyze_workbook(snapshot_path)
+    profile = load_stored_profile(project.profile_id, project.metadata)
+    analysis = (
+        analyze_profiled_workbook(snapshot_path, profile)
+        if profile is not None
+        else analyze_workbook(snapshot_path)
+    )
     fingerprint = fingerprint_workbook(snapshot_path, analysis)
     rack_observations, device_observations, observation_conflicts = _observations(analysis)
     blocking = [

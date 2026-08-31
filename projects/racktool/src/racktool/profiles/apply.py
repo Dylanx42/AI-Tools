@@ -11,7 +11,8 @@ from racktool.core.analyzer import (
 from racktool.models.analysis import SheetAnalysis, WorkbookAnalysis
 from racktool.profiles.fingerprint import fingerprint_workbook
 from racktool.profiles.matcher import match_profile, select_profile
-from racktool.profiles.schema import LayoutProfile, ProfileApplication
+from racktool.profiles.schema import LayoutProfile, ProfileApplication, ProfileError
+from racktool.profiles.storage import normalize_profile
 
 
 def _ignored_devices(
@@ -100,6 +101,44 @@ def _analysis_dict(
     return WorkbookAnalysis(format=analysis.format, sheets=sheets).to_dict()
 
 
+def _profile_analyses(
+    workbook_path: Path,
+    profile: LayoutProfile,
+) -> tuple[LayoutProfile, WorkbookAnalysis, WorkbookAnalysis]:
+    normalized = normalize_profile(profile)
+    analysis = analyze_workbook(workbook_path, _analysis_options(normalized))
+    all_ignored_ids = _ignored_devices(normalized, tuple(analysis.sheets))
+    filtered = WorkbookAnalysis(
+        format=analysis.format,
+        sheets=[_filter_sheet(sheet, set(all_ignored_ids)) for sheet in analysis.sheets],
+    )
+    return normalized, analysis, filtered
+
+
+def analyze_profiled_workbook(
+    workbook_path: Path,
+    profile: LayoutProfile,
+) -> WorkbookAnalysis:
+    """Analyze only Sheets safely matched by a validated Profile."""
+    normalized, _raw_analysis, filtered = _profile_analyses(workbook_path, profile)
+    selection = select_profile(normalized, filtered)
+    if selection.status != "matched":
+        raise ProfileError(
+            f"Profile {normalized.profile_id} cannot be imported: {selection.message}"
+        )
+    selected_names = {
+        item.sheet_name
+        for item in selection.matches
+        if item.status == "matched"
+    }
+    if not selected_names:
+        raise ProfileError(f"Profile {normalized.profile_id} selected no Sheets")
+    return WorkbookAnalysis(
+        format=filtered.format,
+        sheets=[sheet for sheet in filtered.sheets if sheet.name in selected_names],
+    )
+
+
 def apply_profile(
     workbook_path: Path,
     profile: LayoutProfile,
@@ -107,13 +146,8 @@ def apply_profile(
     dry_run: bool = True,
     force: bool = False,
 ) -> ProfileApplication:
-    analysis = analyze_workbook(workbook_path, _analysis_options(profile))
+    profile, analysis, filtered_analysis = _profile_analyses(workbook_path, profile)
     fingerprint = fingerprint_workbook(workbook_path, analysis)
-    all_ignored_ids = _ignored_devices(profile, tuple(analysis.sheets))
-    filtered_analysis = WorkbookAnalysis(
-        format=analysis.format,
-        sheets=[_filter_sheet(sheet, set(all_ignored_ids)) for sheet in analysis.sheets],
-    )
     matches = match_profile(profile, filtered_analysis)
     selection = select_profile(profile, filtered_analysis)
 

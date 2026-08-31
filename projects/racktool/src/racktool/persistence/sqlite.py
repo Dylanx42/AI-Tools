@@ -10,6 +10,7 @@ from typing import Any
 from racktool.core.identity import normalize_path, unique_suffix
 from racktool.models.domain import CellRange, Device, Placement, Rack
 from racktool.models.project import IdentityConflict, RackProject, SourceMapping
+from racktool.profiles.storage import load_stored_profile
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -241,6 +242,7 @@ def save_project(path: Path, project: RackProject) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_name(f".{target.name}.tmp-{unique_suffix()}")
     normalized = _normalized_project(project)
+    load_stored_profile(normalized.profile_id, normalized.metadata)
     connection: sqlite3.Connection | None = None
     try:
         connection = _connect_for_write(temp_path)
@@ -340,6 +342,7 @@ def load_project(path: Path) -> RackProject:
             conflicts=conflicts,
             metadata=metadata,
         )
+        load_stored_profile(project.profile_id, project.metadata)
         _validate_references(project)
         return project
     finally:
