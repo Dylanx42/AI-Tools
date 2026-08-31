@@ -24,7 +24,6 @@ from racktool.models.project import (
     RescanResult,
     SourceMapping,
 )
-from racktool.profiles import analyze_profiled_workbook
 from racktool.profiles.fingerprint import fingerprint_workbook
 from racktool.profiles.schema import LayoutProfile, ProfileError
 from racktool.profiles.storage import (
@@ -595,6 +594,18 @@ def _build_from_analysis(
     )
 
 
+def _analyze_workbook_with_profile(
+    workbook_path: Path,
+    profile: LayoutProfile,
+) -> WorkbookAnalysis:
+    # Import the concrete implementation only after both public packages have
+    # initialized. Importing through racktool.profiles here creates a package
+    # initialization cycle when profiles.apply first imports core.analyzer.
+    from racktool.profiles.apply import analyze_profiled_workbook
+
+    return analyze_profiled_workbook(workbook_path, profile)
+
+
 def import_workbook(
     workbook_path: Path,
     *,
@@ -605,7 +616,7 @@ def import_workbook(
     factory = id_factory or default_id_factory
     normalized_profile = normalize_profile(profile) if profile is not None else None
     analysis = (
-        analyze_profiled_workbook(source, normalized_profile)
+        _analyze_workbook_with_profile(source, normalized_profile)
         if normalized_profile is not None
         else analyze_workbook(source)
     )
@@ -904,7 +915,7 @@ def _rescan_from_analysis(
 ) -> RescanResult:
     profile = load_stored_profile(project.profile_id, project.metadata)
     analysis = (
-        analyze_profiled_workbook(snapshot_path, profile)
+        _analyze_workbook_with_profile(snapshot_path, profile)
         if profile is not None
         else analyze_workbook(snapshot_path)
     )
