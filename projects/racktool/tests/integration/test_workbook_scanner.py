@@ -1,4 +1,5 @@
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 from openpyxl import Workbook
@@ -72,3 +73,59 @@ def test_scanner_rejects_malformed_xlsx(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Invalid XLSX workbook"):
         scan_workbook(path)
+
+
+def test_scanner_preserves_styled_blank_cells_without_expanding_content_range(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "styled-blank.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet["A1"] = "content"
+    sheet["C3"].fill = PatternFill("solid", fgColor="00FF00")
+    workbook.save(path)
+    source_bytes = path.read_bytes()
+
+    result = scan_workbook(path).to_dict()["sheets"][0]
+    cells = {cell["coordinate"]: cell for cell in result["cells"]}
+
+    assert result["used_range"] == "A1:A1"
+    assert cells["C3"]["value"] is None
+    assert cells["C3"]["style_signature"] != cells["A1"]["style_signature"]
+    assert path.read_bytes() == source_bytes
+
+
+def test_scanner_normalizes_missing_ooxml_manifest(tmp_path: Path) -> None:
+    path = tmp_path / "missing-manifest.xlsx"
+    with ZipFile(path, "w") as archive:
+        archive.writestr("placeholder.txt", "not an OOXML workbook")
+    source_bytes = path.read_bytes()
+
+    with pytest.raises(ValueError, match="Invalid XLSX workbook"):
+        scan_workbook(path)
+
+    assert path.read_bytes() == source_bytes
+
+
+def test_scanner_normalizes_malformed_ooxml_xml(tmp_path: Path) -> None:
+    valid_path = tmp_path / "valid.xlsx"
+    workbook = Workbook()
+    workbook.save(valid_path)
+    with ZipFile(valid_path) as archive:
+        entries = {
+            info.filename: archive.read(info.filename)
+            for info in archive.infolist()
+        }
+
+    path = tmp_path / "malformed-xml.xlsx"
+    entries["xl/workbook.xml"] = b"<workbook>"
+    with ZipFile(path, "w") as archive:
+        for name, payload in entries.items():
+            archive.writestr(name, payload)
+    source_bytes = path.read_bytes()
+
+    with pytest.raises(ValueError, match="Invalid XLSX workbook"):
+        scan_workbook(path)
+
+    assert path.read_bytes() == source_bytes

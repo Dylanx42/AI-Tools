@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,29 @@ class _MergedRegion:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class CoordinateRackRule:
+    """Validated coordinate fallback supplied by a layout Profile."""
+
+    title_range: str
+    left_axis_column: int
+    right_axis_column: int | None
+    start_row: int
+    end_row: int
+    device_range: str
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisOptions:
+    """Conservative parsing controls shared by Profile-driven and default analysis."""
+
+    axis_direction: AxisDirection | None = None
+    axis_pairing: str | None = None
+    allowed_heights: tuple[int, ...] = ()
+    max_missing_rows: int = 1
+    coordinate_rack: CoordinateRackRule | None = None
+
+
 def _merged_regions(sheet: SheetInfo) -> list[_MergedRegion]:
     regions = []
     for a1 in sheet.merged_ranges:
@@ -77,7 +101,19 @@ def _axis_candidate(
     if step not in (-1, 1):
         return None
     direction: AxisDirection = "ascending" if step == 1 else "descending"
-    confidence = min(0.99, 0.75 + len(points) / 200)
+    missing_rows = sum(
+        max(0, current_row - previous_row - 1)
+        for (previous_row, _), (current_row, _) in pairwise(points)
+    )
+    confidence = min(0.99, max(0.0, 0.75 + len(points) / 200 - missing_rows * 0.05))
+    evidence = [
+        f"{len(points)} consecutive integer U values",
+        f"{direction} by worksheet row",
+    ]
+    if missing_rows:
+        evidence.append(f"{missing_rows} bounded blank worksheet row")
+    if min(values) != 1:
+        evidence.append("partial U axis does not start at U1")
     return UAxisCandidate(
         sheet_name=sheet_name,
         column_index=column_index,
@@ -89,15 +125,20 @@ def _axis_candidate(
         direction=direction,
         u_to_row={value: row for row, value in points},
         confidence=confidence,
-        evidence=[
-            f"{len(points)} consecutive integer U values",
-            f"{direction} by worksheet row",
-        ],
+        evidence=evidence,
     )
 
 
-def detect_u_axes(sheet: SheetInfo, min_length: int = 4) -> list[UAxisCandidate]:
+def detect_u_axes(
+    sheet: SheetInfo,
+    min_length: int = 4,
+    *,
+    max_missing_rows: int = 1,
+    direction: AxisDirection | None = None,
+) -> list[UAxisCandidate]:
     """Find contiguous vertical integer sequences without assuming a fixed rack height."""
+    if max_missing_rows not in {0, 1}:
+        raise ValueError("max_missing_rows must be 0 or 1")
     points_by_column: dict[int, list[tuple[int, int]]] = {}
     for cell in sheet.cells:
         value = _integer_u(cell.value)
@@ -110,6 +151,7 @@ def detect_u_axes(sheet: SheetInfo, min_length: int = 4) -> list[UAxisCandidate]
     for column, points in points_by_column.items():
         run: list[tuple[int, int]] = []
         step: int | None = None
+        missing_rows = 0
         for point in sorted(points):
             if not run:
                 run = [point]
@@ -118,23 +160,29 @@ def detect_u_axes(sheet: SheetInfo, min_length: int = 4) -> list[UAxisCandidate]
             row, value = point
             previous_row, previous_value = run[-1]
             next_step = value - previous_value
+            row_gap = row - previous_row - 1
             if (
-                row == previous_row + 1
+                row_gap >= 0
+                and missing_rows + row_gap <= max_missing_rows
                 and next_step in (-1, 1)
                 and (step is None or step == next_step)
             ):
                 run.append(point)
                 step = next_step
+                missing_rows += row_gap
                 continue
             candidate = _axis_candidate(sheet.name, column, run, min_length)
             if candidate is not None:
                 candidates.append(candidate)
             run = [point]
             step = None
+            missing_rows = 0
         candidate = _axis_candidate(sheet.name, column, run, min_length)
         if candidate is not None:
             candidates.append(candidate)
 
+    if direction is not None:
+        candidates = [candidate for candidate in candidates if candidate.direction == direction]
     return sorted(candidates, key=lambda item: (item.start_row, item.column_index))
 
 
@@ -157,6 +205,8 @@ def detect_racks(sheet: SheetInfo, axes: list[UAxisCandidate]) -> list[RackCandi
 
     racks: list[RackCandidate] = []
     for left_axis in axes:
+        if left_axis.min_u != 1:
+            continue
         title_regions = [
             region
             for region in regions
@@ -229,6 +279,88 @@ def detect_racks(sheet: SheetInfo, axes: list[UAxisCandidate]) -> list[RackCandi
     return sorted(racks, key=lambda item: (item.start_row, item.left_axis_column))
 
 
+def _coordinate_rack(
+    sheet: SheetInfo,
+    axes: list[UAxisCandidate],
+    rule: CoordinateRackRule,
+) -> tuple[RackCandidate | None, _MergedRegion]:
+    device_min_col, device_min_row, device_max_col, device_max_row = range_boundaries(
+        rule.device_range
+    )
+    if (
+        device_min_col is None
+        or device_min_row is None
+        or device_max_col is None
+        or device_max_row is None
+    ):
+        raise ValueError(f"Invalid Profile device range: {rule.device_range}")
+    device_region = _MergedRegion(
+        rule.device_range,
+        device_min_col,
+        device_min_row,
+        device_max_col,
+        device_max_row,
+    )
+    left_axis = next(
+        (
+            axis
+            for axis in axes
+            if axis.column_index == rule.left_axis_column
+            and axis.start_row == rule.start_row
+            and axis.end_row == rule.end_row
+            and axis.min_u == 1
+        ),
+        None,
+    )
+    if left_axis is None:
+        return None, device_region
+    right_axis = None
+    if rule.right_axis_column is not None:
+        right_axis = next(
+            (
+                axis
+                for axis in axes
+                if axis.column_index == rule.right_axis_column and _same_axis(left_axis, axis)
+            ),
+            None,
+        )
+        if right_axis is None:
+            return None, device_region
+
+    title_min_col, title_min_row, _, _ = range_boundaries(rule.title_range)
+    if title_min_col is None or title_min_row is None:
+        raise ValueError(f"Invalid Profile title range: {rule.title_range}")
+    title_coordinate = f"{get_column_letter(title_min_col)}{title_min_row}"
+    title_cell = next((cell for cell in sheet.cells if cell.coordinate == title_coordinate), None)
+    if title_cell is None or not isinstance(title_cell.value, str) or not title_cell.value.strip():
+        return None, device_region
+
+    confidence = left_axis.confidence
+    if right_axis is not None:
+        confidence = min(confidence, right_axis.confidence)
+    rack = RackCandidate(
+        candidate_id=_candidate_id("rack", sheet.name, rule.title_range),
+        sheet_name=sheet.name,
+        rack_name=title_cell.value.strip(),
+        title_range=rule.title_range,
+        left_axis_column=left_axis.column_index,
+        right_axis_column=right_axis.column_index if right_axis is not None else None,
+        device_columns=list(range(device_min_col, device_max_col + 1)),
+        start_row=left_axis.start_row,
+        end_row=left_axis.end_row,
+        height_u=left_axis.max_u,
+        direction=left_axis.direction,
+        u_to_row=dict(left_axis.u_to_row),
+        confidence=confidence,
+        evidence=[
+            "Profile fixed rack coordinates",
+            "Profile fixed device area",
+            "rack height inferred from U axis",
+        ],
+    )
+    return rack, device_region
+
+
 def _source_region(
     regions: list[_MergedRegion], rack: RackCandidate, row: int, column: int
 ) -> _MergedRegion | None:
@@ -247,21 +379,27 @@ def _source_region(
 
 
 def detect_devices(
-    sheet: SheetInfo, racks: list[RackCandidate]
+    sheet: SheetInfo,
+    racks: list[RackCandidate],
+    device_areas: dict[str, _MergedRegion] | None = None,
 ) -> tuple[list[DeviceCandidate], list[PlacementCandidate]]:
     """Extract text-bearing device candidates from each detected rack's device area."""
     regions = _merged_regions(sheet)
     devices: list[DeviceCandidate] = []
     placements: list[PlacementCandidate] = []
     for rack in racks:
+        device_area = (device_areas or {}).get(rack.candidate_id)
         row_to_u = {row: u for u, row in rack.u_to_row.items()}
         for cell in sheet.cells:
             row, column = coordinate_to_tuple(cell.coordinate)
+            if cell.value is None:
+                continue
             display_text = str(cell.value)
             if (
                 column not in rack.device_columns
                 or row < rack.start_row
                 or row > rack.end_row
+                or (device_area is not None and not device_area.contains(row, column))
                 or not display_text.strip()
             ):
                 continue
@@ -395,10 +533,34 @@ def _analysis_issues(
     return issues
 
 
-def analyze_sheet(sheet: SheetInfo) -> SheetAnalysis:
-    axes = detect_u_axes(sheet)
-    racks = detect_racks(sheet, axes)
-    devices, placements = detect_devices(sheet, racks)
+def recompute_analysis_issues(sheet: SheetAnalysis) -> list[AnalysisIssue]:
+    """Rebuild issues after deterministic Profile filtering."""
+    return _analysis_issues(sheet.u_axes, sheet.racks, sheet.devices, sheet.placements)
+
+
+def analyze_sheet(sheet: SheetInfo, options: AnalysisOptions | None = None) -> SheetAnalysis:
+    active = options or AnalysisOptions()
+    axes = detect_u_axes(
+        sheet,
+        max_missing_rows=active.max_missing_rows,
+        direction=active.axis_direction,
+    )
+    device_areas: dict[str, _MergedRegion] = {}
+    if active.coordinate_rack is not None:
+        coordinate_rack, device_area = _coordinate_rack(sheet, axes, active.coordinate_rack)
+        racks = [] if coordinate_rack is None else [coordinate_rack]
+        if coordinate_rack is not None:
+            device_areas[coordinate_rack.candidate_id] = device_area
+    else:
+        racks = detect_racks(sheet, axes)
+    if active.allowed_heights:
+        allowed = set(active.allowed_heights)
+        racks = [rack for rack in racks if rack.height_u in allowed]
+    if active.axis_pairing == "paired":
+        racks = [rack for rack in racks if rack.right_axis_column is not None]
+    elif active.axis_pairing == "single_axis_edge":
+        racks = [rack for rack in racks if rack.right_axis_column is None]
+    devices, placements = detect_devices(sheet, racks, device_areas)
     issues = _analysis_issues(axes, racks, devices, placements)
     return SheetAnalysis(
         name=sheet.name,
@@ -410,10 +572,10 @@ def analyze_sheet(sheet: SheetInfo) -> SheetAnalysis:
     )
 
 
-def analyze_workbook(path: Path) -> WorkbookAnalysis:
+def analyze_workbook(path: Path, options: AnalysisOptions | None = None) -> WorkbookAnalysis:
     """Analyze XLSX structure into explainable candidates without modifying the workbook."""
     workbook = scan_workbook(path)
     return WorkbookAnalysis(
         format=workbook.format,
-        sheets=[analyze_sheet(sheet) for sheet in workbook.sheets],
+        sheets=[analyze_sheet(sheet, options) for sheet in workbook.sheets],
     )

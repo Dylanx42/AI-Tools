@@ -8,7 +8,8 @@ SelectionStatus = Literal["matched", "review_required", "ambiguous", "unmatched"
 ApplicationStatus = Literal["applied", "review_required", "ambiguous", "rejected"]
 AxisDirectionRule = Literal["ascending", "descending", "any"]
 AxisPairingRule = Literal["paired", "single_axis_edge", "mixed", "any"]
-DeviceAreaMode = Literal["between_u_axes", "between_or_edge"]
+RackTitleMode = Literal["merged_cell_above_u_axis", "fixed_range"]
+DeviceAreaMode = Literal["between_u_axes", "between_or_edge", "fixed_range"]
 
 
 class ProfileError(ValueError):
@@ -34,8 +35,9 @@ class ProfileMatchRule:
 
 @dataclass(frozen=True, slots=True)
 class RackRule:
-    title_mode: Literal["merged_cell_above_u_axis"]
+    title_mode: RackTitleMode
     height_mode: Literal["infer_from_u_axis"]
+    title_range: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,11 +45,17 @@ class UAxisRule:
     direction: AxisDirectionRule = "any"
     pairing: AxisPairingRule = "any"
     allowed_heights: tuple[int, ...] = ()
+    left_column: int | None = None
+    right_column: int | None = None
+    start_row: int | None = None
+    end_row: int | None = None
+    max_missing_rows: int = 1
 
 
 @dataclass(frozen=True, slots=True)
 class DeviceAreaRule:
     mode: DeviceAreaMode
+    source_range: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

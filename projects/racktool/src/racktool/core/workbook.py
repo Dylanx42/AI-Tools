@@ -92,15 +92,16 @@ def _used_range(cells: list[Cell]) -> str | None:
 
 
 def _scan_sheet(sheet: Worksheet, index: int) -> SheetInfo:
-    non_empty = [
+    scanned_cells = [
         cell
         for row in sheet.iter_rows()
         for cell in row
-        if isinstance(cell, Cell) and cell.value is not None
+        if isinstance(cell, Cell) and (cell.value is not None or cell.has_style)
     ]
+    content_cells = [cell for cell in scanned_cells if cell.value is not None]
     cells = [
         CellInfo(cell.coordinate, _json_value(cell.value), cell.data_type, _style_signature(cell))
-        for cell in non_empty
+        for cell in scanned_cells
     ]
     row_heights = {
         str(row): float(dimension.height)
@@ -117,7 +118,7 @@ def _scan_sheet(sheet: Worksheet, index: int) -> SheetInfo:
         index=index,
         state=sheet.sheet_state,
         reported_dimension=sheet.calculate_dimension(),
-        used_range=_used_range(non_empty),
+        used_range=_used_range(content_cells),
         cells=cells,
         merged_ranges=sorted(str(cell_range) for cell_range in sheet.merged_cells.ranges),
         row_heights=row_heights,
@@ -137,10 +138,18 @@ def scan_workbook(path: Path) -> WorkbookInfo:
 
     try:
         workbook = load_workbook(workbook_path, read_only=False, data_only=False)
-    except (BadZipFile, InvalidFileException) as error:
+        try:
+            sheets = [_scan_sheet(sheet, index) for index, sheet in enumerate(workbook.worksheets)]
+            return WorkbookInfo(format="xlsx", sheets=sheets)
+        finally:
+            workbook.close()
+    except (
+        BadZipFile,
+        InvalidFileException,
+        KeyError,
+        IndexError,
+        SyntaxError,
+        EOFError,
+        ValueError,
+    ) as error:
         raise ValueError(f"Invalid XLSX workbook: {workbook_path}") from error
-    try:
-        sheets = [_scan_sheet(sheet, index) for index, sheet in enumerate(workbook.worksheets)]
-        return WorkbookInfo(format="xlsx", sheets=sheets)
-    finally:
-        workbook.close()

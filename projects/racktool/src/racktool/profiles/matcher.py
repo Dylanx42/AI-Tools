@@ -54,13 +54,16 @@ def match_profile_to_sheet(profile: LayoutProfile, sheet: SheetAnalysis) -> Prof
         hard_mismatches.append("sheet has no rack candidates")
 
     checks += 1
-    if sheet.racks and all(
-        "merged rack title immediately above U axis" in rack.evidence for rack in sheet.racks
-    ):
+    expected_title_evidence = (
+        "Profile fixed rack coordinates"
+        if profile.rack.title_mode == "fixed_range"
+        else "merged rack title immediately above U axis"
+    )
+    if sheet.racks and all(expected_title_evidence in rack.evidence for rack in sheet.racks):
         hits += 1
-        reasons.append("rack titles sit immediately above U axes")
+        reasons.append(f"rack title mode is {profile.rack.title_mode}")
     else:
-        hard_mismatches.append("rack titles are not merged cells immediately above U axes")
+        hard_mismatches.append(f"rack titles do not satisfy {profile.rack.title_mode}")
 
     checks += 1
     if sheet.racks and all(
@@ -105,7 +108,13 @@ def match_profile_to_sheet(profile: LayoutProfile, sheet: SheetAnalysis) -> Prof
         )
 
     checks += 1
-    if profile.device_area.mode == "between_u_axes":
+    if profile.device_area.mode == "fixed_range":
+        if sheet.racks and all("Profile fixed device area" in rack.evidence for rack in sheet.racks):
+            hits += 1
+            reasons.append("device area uses validated fixed coordinates")
+        else:
+            hard_mismatches.append("device area does not use the Profile fixed range")
+    elif profile.device_area.mode == "between_u_axes":
         if pairing == "paired":
             hits += 1
             reasons.append("device area sits between paired U axes")
@@ -133,7 +142,11 @@ def match_profile_to_sheet(profile: LayoutProfile, sheet: SheetAnalysis) -> Prof
     if hard_mismatches:
         status = "rejected"
     elif soft_mismatches:
-        status = "review_required"
+        status = (
+            "review_required"
+            if score >= profile.match.review_confidence
+            else "rejected"
+        )
     elif score >= profile.match.min_confidence:
         status = "matched"
     elif score >= profile.match.review_confidence:
@@ -191,6 +204,16 @@ def select_profile(
             score=None,
             matches=matches,
             message="Multiple Sheets matched the same Profile; refuse to guess",
+        )
+
+    if len(review) > 1 and not profile.match.allow_multiple_sheets:
+        return ProfileSelection(
+            status="ambiguous",
+            selected_profile_id=None,
+            selected_sheet_name=None,
+            score=max(item.score for item in review),
+            matches=matches,
+            message="Multiple Sheets require review; refuse to guess",
         )
 
     if review:

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from racktool.core.analyzer import analyze_workbook
+from racktool.core.analyzer import (
+    AnalysisOptions,
+    CoordinateRackRule,
+    analyze_workbook,
+    recompute_analysis_issues,
+)
 from racktool.models.analysis import SheetAnalysis, WorkbookAnalysis
 from racktool.profiles.fingerprint import fingerprint_workbook
 from racktool.profiles.matcher import match_profile, select_profile
@@ -33,13 +38,53 @@ def _filter_sheet(sheet: SheetAnalysis, ignored_ids: set[str]) -> SheetAnalysis:
         for placement in sheet.placements
         if placement.device_candidate_id in device_ids
     ]
-    return SheetAnalysis(
+    filtered = SheetAnalysis(
         name=sheet.name,
         u_axes=list(sheet.u_axes),
         racks=list(sheet.racks),
         devices=devices,
         placements=placements,
-        issues=list(sheet.issues),
+        issues=[],
+    )
+    filtered.issues.extend(recompute_analysis_issues(filtered))
+    return filtered
+
+
+def _analysis_options(profile: LayoutProfile) -> AnalysisOptions:
+    coordinate_rack = None
+    if profile.rack.title_mode == "fixed_range":
+        title_range = profile.rack.title_range
+        device_range = profile.device_area.source_range
+        left_column = profile.u_axis.left_column
+        start_row = profile.u_axis.start_row
+        end_row = profile.u_axis.end_row
+        if (
+            title_range is None
+            or device_range is None
+            or left_column is None
+            or start_row is None
+            or end_row is None
+        ):
+            raise ValueError("Validated fixed-range Profile is missing coordinate fields")
+        coordinate_rack = CoordinateRackRule(
+            title_range=title_range,
+            left_axis_column=left_column,
+            right_axis_column=profile.u_axis.right_column,
+            start_row=start_row,
+            end_row=end_row,
+            device_range=device_range,
+        )
+    direction = profile.u_axis.direction
+    return AnalysisOptions(
+        axis_direction=None if direction == "any" else direction,
+        axis_pairing=(
+            None
+            if coordinate_rack is None or profile.u_axis.pairing in {"any", "mixed"}
+            else profile.u_axis.pairing
+        ),
+        allowed_heights=profile.u_axis.allowed_heights,
+        max_missing_rows=profile.u_axis.max_missing_rows,
+        coordinate_rack=coordinate_rack,
     )
 
 
@@ -62,10 +107,15 @@ def apply_profile(
     dry_run: bool = True,
     force: bool = False,
 ) -> ProfileApplication:
-    analysis = analyze_workbook(workbook_path)
+    analysis = analyze_workbook(workbook_path, _analysis_options(profile))
     fingerprint = fingerprint_workbook(workbook_path, analysis)
-    matches = match_profile(profile, analysis)
-    selection = select_profile(profile, analysis)
+    all_ignored_ids = _ignored_devices(profile, tuple(analysis.sheets))
+    filtered_analysis = WorkbookAnalysis(
+        format=analysis.format,
+        sheets=[_filter_sheet(sheet, set(all_ignored_ids)) for sheet in analysis.sheets],
+    )
+    matches = match_profile(profile, filtered_analysis)
+    selection = select_profile(profile, filtered_analysis)
 
     if selection.status == "unmatched":
         return ProfileApplication(
@@ -108,9 +158,22 @@ def apply_profile(
         item.sheet_name for item in matches if item.status == "matched"
     )
     if not selected_sheets and force:
-        selected_sheets = tuple(
+        review_sheets = tuple(
             item.sheet_name for item in matches if item.status == "review_required"
         )
+        if len(review_sheets) > 1 and not profile.match.allow_multiple_sheets:
+            return ProfileApplication(
+                status="ambiguous",
+                profile_id=profile.profile_id,
+                dry_run=dry_run,
+                fingerprint=fingerprint,
+                matches=matches,
+                selected_sheets=(),
+                ignored_device_candidate_ids=(),
+                analysis=None,
+                message="Multiple Sheets require review; refuse to force a single-Sheet Profile",
+            )
+        selected_sheets = review_sheets
     ignored_ids = _ignored_devices(
         profile,
         tuple(sheet for sheet in analysis.sheets if sheet.name in selected_sheets),

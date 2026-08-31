@@ -17,7 +17,7 @@ rack:
 u_axis:
   direction: descending
   pairing: mixed
-  allowed_heights: [10, 12, 42, 47, 48, 53]
+  allowed_heights: []
 
 device_area:
   mode: between_or_edge

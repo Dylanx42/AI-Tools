@@ -7,6 +7,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.cli.main import main
 from racktool.core import analyze_workbook
+from racktool.core.analyzer import AnalysisOptions
 
 
 def _fill_descending_axis(
@@ -225,3 +226,98 @@ def test_numeric_device_labels_are_preserved_as_text(tmp_path: Path) -> None:
     assert [issue["code"] for issue in analysis["issues"]] == [
         "non-text-device-candidate"
     ]
+
+
+def test_partial_non_one_based_axis_never_forms_a_rack_or_placement(tmp_path: Path) -> None:
+    path = tmp_path / "partial-axis.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-PARTIAL"
+    for row, u_number in enumerate(range(20, 8, -1), start=2):
+        sheet.cell(row, 1, u_number)
+        sheet.cell(row, 3, u_number)
+    sheet["B2"] = "设备"
+    workbook.save(path)
+
+    analysis = analyze_workbook(path).to_dict()["sheets"][0]
+
+    assert len(analysis["u_axes"]) == 2
+    assert all(axis["min_u"] == 9 for axis in analysis["u_axes"])
+    assert analysis["racks"] == []
+    assert analysis["devices"] == []
+    assert analysis["placements"] == []
+    assert [issue["code"] for issue in analysis["issues"]] == [
+        "unresolved-u-axis",
+        "unresolved-u-axis",
+    ]
+
+
+def test_one_bounded_blank_row_preserves_explicit_u_mapping(tmp_path: Path) -> None:
+    path = tmp_path / "near-contiguous-axis.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-GAP"
+    values = [12, 11, 10, None, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+    for row, u_number in enumerate(values, start=2):
+        if u_number is not None:
+            sheet.cell(row, 1, u_number)
+            sheet.cell(row, 3, u_number)
+    sheet.merge_cells("B4:B6")
+    sheet["B4"] = "跨空白行设备"
+    workbook.save(path)
+
+    analysis = analyze_workbook(path).to_dict()["sheets"][0]
+    rack = analysis["racks"][0]
+
+    assert len(analysis["u_axes"]) == 2
+    assert rack["height_u"] == 12
+    assert rack["u_to_row"] == {
+        1: 14,
+        2: 13,
+        3: 12,
+        4: 11,
+        5: 10,
+        6: 9,
+        7: 8,
+        8: 7,
+        9: 6,
+        10: 4,
+        11: 3,
+        12: 2,
+    }
+    assert analysis["placements"][0]["start_u"] == 9
+    assert analysis["placements"][0]["end_u"] == 10
+    assert analysis["placements"][0]["height_u"] == 2
+
+
+def test_more_than_one_blank_axis_row_is_not_guessed(tmp_path: Path) -> None:
+    path = tmp_path / "ambiguous-axis-gap.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-AMBIGUOUS"
+    values = [12, 11, 10, None, None, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+    for row, u_number in enumerate(values, start=2):
+        if u_number is not None:
+            sheet.cell(row, 1, u_number)
+            sheet.cell(row, 3, u_number)
+    workbook.save(path)
+
+    analysis = analyze_workbook(path).to_dict()["sheets"][0]
+
+    assert analysis["racks"] == []
+    assert analysis["devices"] == []
+    assert analysis["placements"] == []
+
+
+def test_analyzer_rejects_unbounded_axis_gap_configuration(tmp_path: Path) -> None:
+    path = tmp_path / "invalid-gap-configuration.xlsx"
+    _make_dual_axis_workbook(path)
+
+    with pytest.raises(ValueError, match="max_missing_rows must be 0 or 1"):
+        analyze_workbook(path, AnalysisOptions(max_missing_rows=2))

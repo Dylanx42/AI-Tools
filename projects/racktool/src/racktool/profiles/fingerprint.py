@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -35,18 +34,39 @@ def _pairing(sheet: SheetAnalysis) -> str:
 def _sheet_features(sheet: SheetAnalysis) -> dict[str, Any]:
     heights = sorted({rack.height_u for rack in sheet.racks})
     directions = sorted({rack.direction for rack in sheet.racks})
-    issue_codes = sorted({issue.code for issue in sheet.issues})
     return {
         "name": sheet.name,
         "u_axis_count": len(sheet.u_axes),
         "rack_count": len(sheet.racks),
-        "device_count": len(sheet.devices),
-        "placement_count": len(sheet.placements),
-        "issue_count": len(sheet.issues),
-        "issue_codes": issue_codes,
         "rack_heights": heights,
         "u_directions": directions,
         "pairing": _pairing(sheet),
+        "u_axes": [
+            {
+                "column_index": axis.column_index,
+                "start_row": axis.start_row,
+                "end_row": axis.end_row,
+                "min_u": axis.min_u,
+                "max_u": axis.max_u,
+                "direction": axis.direction,
+                "u_to_row": sorted(axis.u_to_row.items()),
+            }
+            for axis in sheet.u_axes
+        ],
+        "racks": [
+            {
+                "title_range": rack.title_range,
+                "left_axis_column": rack.left_axis_column,
+                "right_axis_column": rack.right_axis_column,
+                "device_columns": list(rack.device_columns),
+                "start_row": rack.start_row,
+                "end_row": rack.end_row,
+                "height_u": rack.height_u,
+                "direction": rack.direction,
+                "u_to_row": sorted(rack.u_to_row.items()),
+            }
+            for rack in sheet.racks
+        ],
         "has_merged_title_above_axis": all(
             "merged rack title immediately above U axis" in rack.evidence
             for rack in sheet.racks
@@ -68,26 +88,14 @@ def _layout_payload(analysis: WorkbookAnalysis) -> dict[str, Any]:
         "sheets": [_sheet_features(sheet) for sheet in analysis.sheets],
         "totals": {
             "sheets": len(analysis.sheets),
+            "u_axes": sum(len(sheet.u_axes) for sheet in analysis.sheets),
             "racks": sum(len(sheet.racks) for sheet in analysis.sheets),
-            "devices": sum(len(sheet.devices) for sheet in analysis.sheets),
-            "placements": sum(len(sheet.placements) for sheet in analysis.sheets),
-            "issues": sum(len(sheet.issues) for sheet in analysis.sheets),
-            "issue_codes": sorted(
-                {
-                    issue.code
-                    for sheet in analysis.sheets
-                    for issue in sheet.issues
-                }
-            ),
             "rack_heights": sorted(
                 {
                     rack.height_u
                     for sheet in analysis.sheets
                     for rack in sheet.racks
                 }
-            ),
-            "pairings": dict(
-                sorted(Counter(_pairing(sheet) for sheet in analysis.sheets).items())
             ),
         },
     }

@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from openpyxl.utils import column_index_from_string, get_column_letter
+from openpyxl.utils.cell import range_boundaries
 from yaml.nodes import MappingNode
 
 from racktool.profiles.schema import (
@@ -20,6 +22,8 @@ from racktool.profiles.schema import (
 
 _PROFILE_ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _MAX_PROFILE_BYTES = 1024 * 1024
+_MAX_EXCEL_COLUMN = 16_384
+_MAX_EXCEL_ROW = 1_048_576
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -100,6 +104,54 @@ def _positive_integer_list(value: Any, path: str) -> tuple[int, ...]:
     if len(items) != len(set(items)):
         raise ProfileValidationError(f"{path} must not contain duplicates")
     return tuple(sorted(items))
+
+
+def _non_negative_integer(value: Any, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ProfileValidationError(f"{path} must be a non-negative integer")
+    return int(value)
+
+
+def _positive_integer(value: Any, path: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ProfileValidationError(f"{path} must be a positive integer")
+    return int(value)
+
+
+def _column(value: Any, path: str) -> int:
+    if isinstance(value, bool):
+        raise ProfileValidationError(f"{path} must be a positive column number or letter")
+    if isinstance(value, int):
+        if not 1 <= value <= _MAX_EXCEL_COLUMN:
+            raise ProfileValidationError(f"{path} must be a positive column number or letter")
+        return value
+    text = _string(value, path).upper()
+    try:
+        column = column_index_from_string(text)
+    except ValueError as error:
+        raise ProfileValidationError(
+            f"{path} must be a positive column number or letter"
+        ) from error
+    if column > _MAX_EXCEL_COLUMN:
+        raise ProfileValidationError(f"{path} exceeds the XLSX column limit")
+    return column
+
+
+def _range(value: Any, path: str) -> str:
+    text = _string(value, path).upper().replace("$", "")
+    try:
+        min_col, min_row, max_col, max_row = range_boundaries(text)
+    except ValueError as error:
+        raise ProfileValidationError(f"{path} must be a valid A1 range") from error
+    if min_col is None or min_row is None or max_col is None or max_row is None:
+        raise ProfileValidationError(f"{path} must be a bounded A1 range")
+    if min_col > max_col or min_row > max_row:
+        raise ProfileValidationError(f"{path} must not be inverted")
+    if max_col > _MAX_EXCEL_COLUMN or max_row > _MAX_EXCEL_ROW:
+        raise ProfileValidationError(f"{path} exceeds XLSX worksheet limits")
+    start = f"{get_column_letter(min_col)}{min_row}"
+    end = f"{get_column_letter(max_col)}{max_row}"
+    return start if start == end else f"{start}:{end}"
 
 
 def _string_list(value: Any, path: str) -> tuple[str, ...]:
@@ -191,7 +243,7 @@ def validate_profile_data(raw: Any) -> LayoutProfile:
     height_raw = _mapping(rack_raw["height"], "profile.rack.height")
     _check_keys(
         title_raw,
-        allowed={"mode"},
+        allowed={"mode", "range"},
         required={"mode"},
         path="profile.rack.title",
     )
@@ -202,10 +254,36 @@ def validate_profile_data(raw: Any) -> LayoutProfile:
         path="profile.rack.height",
     )
 
+    title_mode = _enum(
+        title_raw["mode"],
+        {"merged_cell_above_u_axis", "fixed_range"},
+        "profile.rack.title.mode",
+    )
+    title_range = (
+        _range(title_raw["range"], "profile.rack.title.range")
+        if "range" in title_raw
+        else None
+    )
+    if title_mode == "fixed_range" and title_range is None:
+        raise ProfileValidationError("profile.rack.title.range is required for fixed_range")
+    if title_mode != "fixed_range" and title_range is not None:
+        raise ProfileValidationError(
+            "profile.rack.title.range is only valid for fixed_range"
+        )
+
     axis_raw = _mapping(root["u_axis"], "profile.u_axis")
     _check_keys(
         axis_raw,
-        allowed={"direction", "pairing", "allowed_heights"},
+        allowed={
+            "direction",
+            "pairing",
+            "allowed_heights",
+            "left_column",
+            "right_column",
+            "start_row",
+            "end_row",
+            "max_missing_rows",
+        },
         required=set(),
         path="profile.u_axis",
     )
@@ -219,19 +297,71 @@ def validate_profile_data(raw: Any) -> LayoutProfile:
         {"paired", "single_axis_edge", "mixed", "any"},
         "profile.u_axis.pairing",
     )
+    left_column = (
+        _column(axis_raw["left_column"], "profile.u_axis.left_column")
+        if "left_column" in axis_raw
+        else None
+    )
+    right_column = (
+        _column(axis_raw["right_column"], "profile.u_axis.right_column")
+        if "right_column" in axis_raw
+        else None
+    )
+    start_row = (
+        _positive_integer(axis_raw["start_row"], "profile.u_axis.start_row")
+        if "start_row" in axis_raw
+        else None
+    )
+    end_row = (
+        _positive_integer(axis_raw["end_row"], "profile.u_axis.end_row")
+        if "end_row" in axis_raw
+        else None
+    )
+    max_missing_rows = _non_negative_integer(
+        axis_raw.get("max_missing_rows", 1),
+        "profile.u_axis.max_missing_rows",
+    )
+    if max_missing_rows > 1:
+        raise ProfileValidationError("profile.u_axis.max_missing_rows must be 0 or 1")
+    coordinates = (left_column, start_row, end_row)
+    if any(value is not None for value in coordinates) and any(
+        value is None for value in coordinates
+    ):
+        raise ProfileValidationError(
+            "profile.u_axis left_column, start_row, and end_row must be provided together"
+        )
+    if start_row is not None and end_row is not None and end_row < start_row:
+        raise ProfileValidationError("profile.u_axis.end_row must not precede start_row")
+    if right_column is not None and left_column is None:
+        raise ProfileValidationError(
+            "profile.u_axis.right_column requires left_column coordinates"
+        )
+    if left_column is not None and right_column is not None and right_column <= left_column:
+        raise ProfileValidationError("profile.u_axis.right_column must be right of left_column")
 
     device_raw = _mapping(root["device_area"], "profile.device_area")
     _check_keys(
         device_raw,
-        allowed={"mode"},
+        allowed={"mode", "range"},
         required={"mode"},
         path="profile.device_area",
     )
     device_mode = _enum(
         device_raw["mode"],
-        {"between_u_axes", "between_or_edge"},
+        {"between_u_axes", "between_or_edge", "fixed_range"},
         "profile.device_area.mode",
     )
+    device_range = (
+        _range(device_raw["range"], "profile.device_area.range")
+        if "range" in device_raw
+        else None
+    )
+    if device_mode == "fixed_range" and device_range is None:
+        raise ProfileValidationError("profile.device_area.range is required for fixed_range")
+    if device_mode != "fixed_range" and device_range is not None:
+        raise ProfileValidationError(
+            "profile.device_area.range is only valid for fixed_range"
+        )
     if pairing == "single_axis_edge" and device_mode == "between_u_axes":
         raise ProfileValidationError(
             "single_axis_edge pairing conflicts with between_u_axes device area"
@@ -240,6 +370,63 @@ def validate_profile_data(raw: Any) -> LayoutProfile:
         raise ProfileValidationError(
             "mixed pairing requires between_or_edge device area"
         )
+    coordinate_fallback = title_mode == "fixed_range" or device_mode == "fixed_range"
+    if not coordinate_fallback and any(
+        value is not None
+        for value in (left_column, right_column, start_row, end_row)
+    ):
+        raise ProfileValidationError(
+            "profile.u_axis coordinates require fixed coordinate fallback"
+        )
+    if coordinate_fallback:
+        if title_mode != "fixed_range" or device_mode != "fixed_range":
+            raise ProfileValidationError(
+                "fixed coordinate fallback requires fixed_range title and device area"
+            )
+        if left_column is None or start_row is None or end_row is None:
+            raise ProfileValidationError(
+                "fixed coordinate fallback requires U-axis column and row coordinates"
+            )
+        if direction == "any":
+            raise ProfileValidationError(
+                "fixed coordinate fallback requires an explicit U-axis direction"
+            )
+        if pairing == "paired" and right_column is None:
+            raise ProfileValidationError(
+                "paired fixed coordinate fallback requires right_column"
+            )
+        if pairing == "single_axis_edge" and right_column is not None:
+            raise ProfileValidationError(
+                "single_axis_edge fixed coordinate fallback must not define right_column"
+            )
+        if pairing not in {"paired", "single_axis_edge"}:
+            raise ProfileValidationError(
+                "fixed coordinate fallback requires paired or single_axis_edge pairing"
+            )
+        if device_range is None:
+            raise ProfileValidationError("fixed coordinate fallback requires device range")
+        device_min_col, device_min_row, device_max_col, device_max_row = range_boundaries(
+            device_range
+        )
+        if (
+            device_min_col is None
+            or device_min_row is None
+            or device_max_col is None
+            or device_max_row is None
+        ):
+            raise ProfileValidationError("profile.device_area.range must be bounded")
+        if device_min_row < start_row or device_max_row > end_row:
+            raise ProfileValidationError(
+                "profile.device_area.range rows must stay within the U-axis rows"
+            )
+        if device_min_col <= left_column:
+            raise ProfileValidationError(
+                "profile.device_area.range must be right of the left U-axis"
+            )
+        if right_column is not None and device_max_col >= right_column:
+            raise ProfileValidationError(
+                "profile.device_area.range must stay between paired U axes"
+            )
 
     text_raw = _mapping(root.get("text", {}), "profile.text")
     _check_keys(
@@ -267,16 +454,13 @@ def validate_profile_data(raw: Any) -> LayoutProfile:
             ),
         ),
         rack=RackRule(
-            title_mode=_enum(
-                title_raw["mode"],
-                {"merged_cell_above_u_axis"},
-                "profile.rack.title.mode",
-            ),  # type: ignore[arg-type]
+            title_mode=title_mode,  # type: ignore[arg-type]
             height_mode=_enum(
                 height_raw["mode"],
                 {"infer_from_u_axis"},
                 "profile.rack.height.mode",
             ),  # type: ignore[arg-type]
+            title_range=title_range,
         ),
         u_axis=UAxisRule(
             direction=direction,  # type: ignore[arg-type]
@@ -285,8 +469,16 @@ def validate_profile_data(raw: Any) -> LayoutProfile:
                 axis_raw.get("allowed_heights", []),
                 "profile.u_axis.allowed_heights",
             ),
+            left_column=left_column,
+            right_column=right_column,
+            start_row=start_row,
+            end_row=end_row,
+            max_missing_rows=max_missing_rows,
         ),
-        device_area=DeviceAreaRule(mode=device_mode),  # type: ignore[arg-type]
+        device_area=DeviceAreaRule(
+            mode=device_mode,  # type: ignore[arg-type]
+            source_range=device_range,
+        ),
         text=TextRule(
             ignore_exact=_string_list(
                 text_raw.get("ignore_exact", []),
