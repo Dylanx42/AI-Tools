@@ -5,11 +5,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from racktool.core.backup import list_backups, restore_backup
-from racktool.core.project import import_workbook, rescan_workbook
-from racktool.core.sync import WritePlan, WriteResult, apply_writeback, plan_device_move
-from racktool.models.project import RackProject
-from racktool.persistence import load_project, save_project
+from racktool.core.backup import list_backups
+from racktool.core.identity import normalize_path
+from racktool.core.service import (
+    commit_write_plan,
+    import_project,
+    load_project_state,
+    rescan_project,
+    restore_project_backup,
+)
+from racktool.core.sync import WritePlan, WriteResult, plan_device_move
+from racktool.models.project import IdentityConflict, RackProject
 
 
 def default_database_path(workbook: Path) -> Path:
@@ -23,43 +29,45 @@ class GuiSession:
     project: RackProject
     last_plan: WritePlan | None = None
     last_result: WriteResult | None = None
+    last_rescan_conflicts: tuple[IdentityConflict, ...] = ()
     status_message: str = ""
     history: list[str] = field(default_factory=list)
 
     @classmethod
     def open_workbook(cls, workbook: Path, database: Path | None = None) -> GuiSession:
-        workbook_path = workbook.expanduser().resolve()
-        database_path = (database or default_database_path(workbook_path)).expanduser().resolve()
+        workbook_path = normalize_path(workbook)
+        database_path = normalize_path(database or default_database_path(workbook_path))
         if database_path.is_file():
             session = cls.open_project(database_path, workbook_path)
             session.status_message = "已打开已有项目"
             session.history.append(session.status_message)
             return session
-        project = import_workbook(workbook_path)
-        save_project(database_path, project)
+        project = import_project(workbook_path, database_path)
         session = cls(workbook_path, database_path, project, status_message="已打开工作簿并创建项目")
         session.history.append(session.status_message)
         return session
 
     @classmethod
     def open_project(cls, database: Path, workbook: Path | None = None) -> GuiSession:
-        database_path = database.expanduser().resolve()
-        project = load_project(database_path)
+        database_path = normalize_path(database)
+        project = load_project_state(database_path)
         workbook_path = Path(workbook or project.source_workbook or "").expanduser()
         if workbook is not None:
-            workbook_path = workbook.expanduser().resolve()
+            workbook_path = normalize_path(workbook)
         elif project.source_workbook:
-            workbook_path = Path(project.source_workbook).expanduser().resolve()
+            workbook_path = normalize_path(Path(project.source_workbook))
         else:
             raise ValueError("Project does not record a source workbook")
         if not workbook_path.is_file():
             raise FileNotFoundError(workbook_path)
+        if project.source_workbook is None:
+            raise ValueError("Project does not record a source workbook")
+        bound_source = normalize_path(Path(project.source_workbook))
+        if workbook_path != bound_source:
+            raise ValueError("Selected workbook is not the source bound to this project")
         session = cls(workbook_path, database_path, project, status_message="已打开项目")
         session.history.append(session.status_message)
         return session
-
-    def _persist(self) -> None:
-        save_project(self.database_path, self.project)
 
     def device_rows(self) -> list[dict[str, Any]]:
         racks = {rack.rack_id: rack for rack in self.project.racks}
@@ -103,6 +111,7 @@ class GuiSession:
                 "height_u": rack.height_u,
                 "occupied_u": occupancy.get(rack.rack_id, 0),
                 "title_range": rack.title_range or "",
+                "status": rack.status,
             }
             for rack in self.project.racks
         ]
@@ -129,10 +138,20 @@ class GuiSession:
         rows = [item.to_dict() for item in self.project.conflicts]
         if self.last_plan is not None:
             rows.extend(item.to_dict() for item in self.last_plan.conflicts)
+        if self.last_result is not None and self.last_result.plan != self.last_plan:
+            rows.extend(item.to_dict() for item in self.last_result.plan.conflicts)
+        rows.extend(item.to_dict() for item in self.last_rescan_conflicts)
         return rows
 
     def plan_move(self, device_id: str, rack_id: str, start_u: int, end_u: int) -> WritePlan:
-        plan = plan_device_move(self.project, device_id, rack_id, start_u, end_u)
+        plan = plan_device_move(
+            self.project,
+            device_id,
+            rack_id,
+            start_u,
+            end_u,
+            workbook_path=self.workbook_path,
+        )
         self.last_plan = plan
         if plan.conflicts:
             self.status_message = plan.conflicts[0].message
@@ -144,11 +163,15 @@ class GuiSession:
     def apply_move(self) -> WriteResult:
         if self.last_plan is None:
             raise ValueError("No move has been planned")
-        result = apply_writeback(self.workbook_path, self.project, self.last_plan)
+        result = commit_write_plan(
+            self.workbook_path,
+            self.database_path,
+            self.last_plan,
+        )
         self.last_result = result
         if result.status == "applied" and result.project is not None:
             self.project = result.project
-            self._persist()
+            self.last_plan = None
             self.status_message = result.message
         else:
             self.status_message = result.message or "写回被拒绝"
@@ -156,10 +179,19 @@ class GuiSession:
         return result
 
     def rescan(self) -> RackProject:
-        result = rescan_workbook(self.workbook_path, self.project)
-        self.project = result.project
-        self._persist()
-        self.status_message = "已重新扫描工作簿"
+        result = rescan_project(self.workbook_path, self.database_path)
+        self.last_plan = None
+        self.last_result = None
+        self.last_rescan_conflicts = result.conflicts
+        if result.accepted:
+            self.project = result.project
+            self.status_message = "已重新扫描工作簿"
+        else:
+            self.status_message = (
+                result.conflicts[0].message
+                if result.conflicts
+                else "重新扫描被拒绝"
+            )
         self.history.append(self.status_message)
         return self.project
 
@@ -177,8 +209,14 @@ class GuiSession:
         return list_backups(self.workbook_path)
 
     def restore_backup(self, backup: Path) -> Path:
-        restored = restore_backup(backup, self.workbook_path)
-        self.rescan()
+        self.project = restore_project_backup(
+            self.workbook_path,
+            self.database_path,
+            backup,
+        )
+        self.last_plan = None
+        self.last_result = None
+        self.last_rescan_conflicts = ()
         self.status_message = f"已恢复备份 {backup.name}"
         self.history.append(self.status_message)
-        return restored
+        return self.workbook_path

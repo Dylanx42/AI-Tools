@@ -39,10 +39,13 @@ class Rack:
     direction: str | None = None
     u_to_row: dict[int, int] = field(default_factory=dict)
     title_range: str | None = None
+    status: str = "active"
 
     def __post_init__(self) -> None:
         if self.height_u < 1:
             raise ValueError("Rack height must be positive")
+        if self.status not in {"active", "missing"}:
+            raise ValueError(f"Unsupported rack status: {self.status}")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

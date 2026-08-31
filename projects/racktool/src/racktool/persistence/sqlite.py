@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from racktool.core.identity import normalize_path, unique_suffix
 from racktool.models.domain import CellRange, Device, Placement, Rack
 from racktool.models.project import IdentityConflict, RackProject, SourceMapping
 
@@ -20,37 +23,48 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS racks (
     rack_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL
+    payload_json TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS devices (
     device_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL
+    payload_json TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS placements (
     placement_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL
+    payload_json TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS mappings (
     mapping_id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
-    payload_json TEXT NOT NULL
+    payload_json TEXT NOT NULL,
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS conflicts (
     conflict_index INTEGER NOT NULL,
     project_id TEXT NOT NULL,
     payload_json TEXT NOT NULL,
-    PRIMARY KEY (project_id, conflict_index)
+    PRIMARY KEY (project_id, conflict_index),
+    FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE
 );
 """
 
 
-def _connect(path: Path) -> sqlite3.Connection:
+def _connect_for_write(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     connection.execute("PRAGMA foreign_keys = ON")
     connection.executescript(_SCHEMA)
+    return connection
+
+
+def _connect_readonly(path: Path) -> sqlite3.Connection:
+    connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
 
@@ -102,6 +116,7 @@ def _rack(payload: dict[str, Any]) -> Rack:
         direction=payload.get("direction"),
         u_to_row=_u_to_row(payload.get("u_to_row", {})),
         title_range=payload.get("title_range"),
+        status=str(payload.get("status", "active")),
     )
 
 
@@ -155,72 +170,101 @@ def _conflict(payload: dict[str, Any]) -> IdentityConflict:
     )
 
 
+def _normalized_project(project: RackProject) -> RackProject:
+    source = project.source_workbook
+    normalized_source = str(normalize_path(Path(source))) if source else None
+    return replace(project, source_workbook=normalized_source)
+
+
+def _canonical_project_payload(project: RackProject) -> dict[str, Any]:
+    payload = project.to_dict()
+    payload["racks"] = sorted(payload["racks"], key=lambda item: str(item["rack_id"]))
+    payload["devices"] = sorted(
+        payload["devices"], key=lambda item: str(item["device_id"])
+    )
+    payload["placements"] = sorted(
+        payload["placements"], key=lambda item: str(item["placement_id"])
+    )
+    payload["mappings"] = sorted(
+        payload["mappings"], key=lambda item: str(item["mapping_id"])
+    )
+    return payload
+
+
+def _write_project(connection: sqlite3.Connection, project: RackProject) -> None:
+    connection.execute(
+        """
+        INSERT INTO projects (
+            project_id, source_workbook, workbook_fingerprint, layout_fingerprint,
+            profile_id, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            project.project_id,
+            project.source_workbook,
+            project.workbook_fingerprint,
+            project.layout_fingerprint,
+            project.profile_id,
+            _dump(project.metadata),
+        ),
+    )
+    connection.executemany(
+        "INSERT INTO racks (rack_id, project_id, payload_json) VALUES (?, ?, ?)",
+        [(item.rack_id, project.project_id, _dump(item.to_dict())) for item in project.racks],
+    )
+    connection.executemany(
+        "INSERT INTO devices (device_id, project_id, payload_json) VALUES (?, ?, ?)",
+        [(item.device_id, project.project_id, _dump(item.to_dict())) for item in project.devices],
+    )
+    connection.executemany(
+        "INSERT INTO placements (placement_id, project_id, payload_json) VALUES (?, ?, ?)",
+        [
+            (item.placement_id, project.project_id, _dump(item.to_dict()))
+            for item in project.placements
+        ],
+    )
+    connection.executemany(
+        "INSERT INTO mappings (mapping_id, project_id, payload_json) VALUES (?, ?, ?)",
+        [(item.mapping_id, project.project_id, _dump(item.to_dict())) for item in project.mappings],
+    )
+    connection.executemany(
+        "INSERT INTO conflicts (conflict_index, project_id, payload_json) VALUES (?, ?, ?)",
+        [
+            (index, project.project_id, _dump(item.to_dict()))
+            for index, item in enumerate(project.conflicts)
+        ],
+    )
+
+
 def save_project(path: Path, project: RackProject) -> None:
-    connection = _connect(path)
+    target = normalize_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = target.with_name(f".{target.name}.tmp-{unique_suffix()}")
+    normalized = _normalized_project(project)
+    connection: sqlite3.Connection | None = None
     try:
-        connection.execute("DELETE FROM conflicts WHERE project_id = ?", (project.project_id,))
-        connection.execute("DELETE FROM mappings WHERE project_id = ?", (project.project_id,))
-        connection.execute("DELETE FROM placements WHERE project_id = ?", (project.project_id,))
-        connection.execute("DELETE FROM devices WHERE project_id = ?", (project.project_id,))
-        connection.execute("DELETE FROM racks WHERE project_id = ?", (project.project_id,))
-        connection.execute("DELETE FROM projects WHERE project_id = ?", (project.project_id,))
-        connection.execute(
-            """
-            INSERT INTO projects (
-                project_id, source_workbook, workbook_fingerprint, layout_fingerprint,
-                profile_id, metadata_json
-            ) VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                project.project_id,
-                project.source_workbook,
-                project.workbook_fingerprint,
-                project.layout_fingerprint,
-                project.profile_id,
-                _dump(project.metadata),
-            ),
-        )
-        connection.executemany(
-            "INSERT INTO racks (rack_id, project_id, payload_json) VALUES (?, ?, ?)",
-            [(item.rack_id, project.project_id, _dump(item.to_dict())) for item in project.racks],
-        )
-        connection.executemany(
-            "INSERT INTO devices (device_id, project_id, payload_json) VALUES (?, ?, ?)",
-            [
-                (item.device_id, project.project_id, _dump(item.to_dict()))
-                for item in project.devices
-            ],
-        )
-        connection.executemany(
-            "INSERT INTO placements (placement_id, project_id, payload_json) VALUES (?, ?, ?)",
-            [
-                (item.placement_id, project.project_id, _dump(item.to_dict()))
-                for item in project.placements
-            ],
-        )
-        connection.executemany(
-            "INSERT INTO mappings (mapping_id, project_id, payload_json) VALUES (?, ?, ?)",
-            [
-                (item.mapping_id, project.project_id, _dump(item.to_dict()))
-                for item in project.mappings
-            ],
-        )
-        connection.executemany(
-            "INSERT INTO conflicts (conflict_index, project_id, payload_json) VALUES (?, ?, ?)",
-            [
-                (index, project.project_id, _dump(item.to_dict()))
-                for index, item in enumerate(project.conflicts)
-            ],
-        )
+        connection = _connect_for_write(temp_path)
+        _write_project(connection, normalized)
         connection.commit()
-    finally:
         connection.close()
+        connection = None
+        round_trip = load_project(temp_path)
+        if _canonical_project_payload(round_trip) != _canonical_project_payload(normalized):
+            raise ValueError("SQLite project verification did not round-trip exactly")
+        os.replace(temp_path, target)
+    except Exception:
+        if connection is not None:
+            connection.close()
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
 
 
 def load_project(path: Path) -> RackProject:
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    connection = _connect(path)
+    project_path = normalize_path(path)
+    if not project_path.is_file():
+        raise FileNotFoundError(project_path)
+    connection = _connect_readonly(project_path)
     try:
         project_row = connection.execute(
             """
@@ -277,9 +321,15 @@ def load_project(path: Path) -> RackProject:
         metadata = json.loads(metadata_json)
         if not isinstance(metadata, dict):
             raise TypeError("Project metadata must be an object")
-        return RackProject(
+        normalized_source: str | None = None
+        if source_workbook:
+            source_path = Path(source_workbook).expanduser()
+            if not source_path.is_absolute():
+                source_path = project_path.parent / source_path
+            normalized_source = str(source_path.resolve())
+        project = RackProject(
             project_id=str(project_id),
-            source_workbook=source_workbook,
+            source_workbook=normalized_source,
             workbook_fingerprint=workbook_fingerprint,
             layout_fingerprint=layout_fingerprint,
             profile_id=profile_id,
@@ -290,5 +340,24 @@ def load_project(path: Path) -> RackProject:
             conflicts=conflicts,
             metadata=metadata,
         )
+        _validate_references(project)
+        return project
     finally:
         connection.close()
+
+
+def _validate_references(project: RackProject) -> None:
+    rack_ids = {item.rack_id for item in project.racks}
+    device_ids = {item.device_id for item in project.devices}
+    if len(rack_ids) != len(project.racks):
+        raise ValueError("SQLite project contains duplicate rack identities")
+    if len(device_ids) != len(project.devices):
+        raise ValueError("SQLite project contains duplicate device identities")
+    for placement in project.placements:
+        if placement.device_id not in device_ids or placement.rack_id not in rack_ids:
+            raise ValueError("SQLite project contains a dangling Placement reference")
+    for mapping in project.mappings:
+        if mapping.device_id is not None and mapping.device_id not in device_ids:
+            raise ValueError("SQLite project contains a dangling device Mapping reference")
+        if mapping.rack_id is not None and mapping.rack_id not in rack_ids:
+            raise ValueError("SQLite project contains a dangling rack Mapping reference")

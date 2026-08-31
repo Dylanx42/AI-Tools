@@ -7,9 +7,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from racktool.core import analyze_workbook, scan_workbook
-from racktool.core.project import import_workbook, rescan_workbook
-from racktool.core.sync import apply_writeback, plan_device_move
-from racktool.persistence import load_project, save_project
+from racktool.core.service import (
+    commit_write_plan,
+    import_project,
+    load_project_state,
+    rescan_project,
+)
+from racktool.core.sync import plan_device_move
 from racktool.profiles import apply_profile, fingerprint_workbook, load_profile, select_profile
 
 
@@ -155,30 +159,36 @@ def _profile_command(args: argparse.Namespace) -> int:
 
 def _project_command(args: argparse.Namespace) -> int:
     if args.project_command == "import":
-        project = import_workbook(args.workbook, profile_id=args.profile_id)
-        save_project(args.database, project)
+        project = import_project(
+            args.workbook,
+            args.database,
+            profile_id=args.profile_id,
+        )
         print(json.dumps(project.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     if args.project_command == "rescan":
-        current = load_project(args.database)
-        result = rescan_workbook(args.workbook, current)
-        save_project(args.database, result.project)
+        result = rescan_project(args.workbook, args.database)
         print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
-        return 0 if not any(item.severity == "error" for item in result.project.conflicts) else 2
+        return 0 if result.accepted else 2
     return 1
 
 
 def _sync_command(args: argparse.Namespace) -> int:
     if args.sync_command != "move":
         return 1
-    project = load_project(args.database)
-    plan = plan_device_move(project, args.device_id, args.rack_id, args.start_u, args.end_u)
+    project = load_project_state(args.database)
+    plan = plan_device_move(
+        project,
+        args.device_id,
+        args.rack_id,
+        args.start_u,
+        args.end_u,
+        workbook_path=args.workbook,
+    )
     if not args.commit:
         print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not plan.conflicts else 2
-    result = apply_writeback(args.workbook, project, plan)
-    if result.status == "applied" and result.project is not None:
-        save_project(args.database, result.project)
+    result = commit_write_plan(args.workbook, args.database, plan)
     print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if result.status == "applied" else 2
 

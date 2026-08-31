@@ -59,7 +59,10 @@ class RackProject:
 @dataclass(frozen=True, slots=True)
 class RescanResult:
     project: RackProject
+    accepted: bool = True
+    conflicts: tuple[IdentityConflict, ...] = ()
     created_rack_ids: tuple[str, ...] = ()
+    missing_rack_ids: tuple[str, ...] = ()
     created_device_ids: tuple[str, ...] = ()
     updated_device_ids: tuple[str, ...] = ()
     unchanged_device_ids: tuple[str, ...] = ()
