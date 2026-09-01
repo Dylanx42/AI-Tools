@@ -311,10 +311,13 @@ V1.0 发布前至少满足：
 11. Skill 可独立分享；
 12. 不依赖 Agent 也能完成日常工作流。
 
-## 9. 当前待用户补充
+## 9. 当前 Golden 证据与后续补充规则
 
-开发真正进入 Golden Sample 阶段前，需要用户提供：
-
-- 当前讨论中两类机柜图对应的原始 `.xlsx`（建议脱敏）；
-- 对每份样本人工确认的“正确答案”：机柜数、设备数、每台设备 Rack/U；
-- 如存在颜色含义、特殊备注、预留位等，应标注期望行为。
+- 当前已有一个真实私有机柜 workbook，其中两类实质不同的 Sheet 布局已完成人工确认、
+  Sheet-scoped expected JSON、源文件 Hash 和持久 acceptance。
+- 资产清单 workbook 只作为独立对账参考，不是第二个机柜布局 Golden Sample。
+- 私有源文件、expected、分析结果和 acceptance 保留在 Git 忽略的 `samples/private/`；不得把
+  敏感业务内容提交到仓库。
+- Synthetic fixture 用于证明通用行为，不能冒充真实 Golden 或真实格式兼容性证据。
+- 新增真实布局时仍需提供脱敏或私有保存的原始 `.xlsx`、人工正确答案，以及颜色、备注、预留位
+  等语义的期望行为。

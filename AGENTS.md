@@ -53,10 +53,15 @@ This repository is a collection of small AI-assisted tools, automations, and lon
 
 ### `projects/racktool/`
 
-- RackTool is currently bootstrapped from a documentation-only Phase 0 baseline.
+- RackTool is an active V0.5 code project; V0.1 through V0.5 automated gates and remaining manual
+  validation are recorded under `projects/racktool/docs/gates/`.
 - Read `projects/racktool/AGENTS.md` before any RackTool task; its requirements, architecture documents, roadmap, and accepted ADRs are the project contract.
-- Keep `README_PHASE0.md` until the first development task creates the actual project `README.md`; do not rename it as a bootstrap shortcut.
-- Do not infer real workbook layouts from screenshots. Until Golden Sample `.xlsx` files are supplied, use only explicitly authorized synthetic fixtures.
+- `README_PHASE0.md` is retained as historical bootstrap context; `projects/racktool/README.md` is the
+  current project entry point.
+- One private real rack workbook contains two materially different Sheet-scoped Golden layouts with
+  expected results and source Hashes. The asset-inventory workbook is reconciliation evidence, not a
+  second rack-layout Golden. Keep all private business content Git-ignored, and never substitute screenshots
+  or synthetic fixtures for real Golden evidence.
 - Keep all RackTool-specific files under `projects/racktool/` and do not create a nested Git repository.
 
 ## Adding a new project

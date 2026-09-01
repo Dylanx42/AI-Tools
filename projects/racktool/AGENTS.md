@@ -195,7 +195,10 @@ GUI / CLI / Skill
 - 项目目标：开源/公司内部可共享的跨平台 Excel 机柜管理工具。
 - 主开发计划：Codex Cloud + GitHub `AI-Tools/projects/racktool`。
 - 本地设备用于验收：MacBook Air、PD Windows 11 ARM、Lenovo R7000P x86-64。
-- 当前只有机柜图截图用于需求讨论；真正 Golden Sample `.xlsx` 需要在开发阶段补充。
+- 当前已有一个真实私有机柜 workbook，其中两类实质不同的 Sheet 布局已形成 Sheet-scoped
+  expected JSON、源文件 Hash 和持久验收记录；资产清单只作独立对账，不是第二个机柜 Golden。
+- 私有源文件、expected、分析结果和 acceptance 只保留在 Git 忽略的 `samples/private/`，不得提交
+  业务内容；synthetic fixture 不得冒充真实 Golden Sample。
 - V1.0 不嵌入 Agent，不做商业 SaaS。
 
 ## 12. Definition of Done

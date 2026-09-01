@@ -1,5 +1,9 @@
 # Codex Cloud 开工提示词
 
+> 历史说明：本文件保留 V0.1 开工时使用的提示词，不代表当前项目状态；其中 Golden Sample
+> follow-up 已由后续私有验收完成。当前状态见 `../../README.md` 与
+> `../gates/V0.5-integrated-audit.md`。
+
 将下面整段作为 RackTool 第一个 Codex Cloud 开发任务使用。
 
 **前置条件：** 本地 Codex 已经按照 `codex-local-bootstrap-prompt.md` 将 Phase 0 文档完整提交并 push 到 `AI-Tools` 远端仓库。Codex Cloud 中必须已经能够看到 `projects/racktool/AGENTS.md` 与 `projects/racktool/docs/`。如果这些文件不存在或不完整，请停止，不要重新猜测或重建项目约束。
@@ -115,7 +119,9 @@ Because the real Golden Sample `.xlsx` files are not in the repository yet:
   - Chinese text / multi-line cell text;
 - test scanner output deterministically.
 
-Do **not** invent expected results for the user's real screenshots. Record real Golden Samples as a blocking follow-up item.
+Do **not** invent expected results for the user's real screenshots. At the time of this historical prompt,
+real Golden evidence was still outstanding; that gap was later fulfilled with privately retained workbook evidence
+and must never be replaced by synthetic fixtures.
 
 ### 6. Engineering quality
 

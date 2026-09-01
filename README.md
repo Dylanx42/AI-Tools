@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | [`codex-quota-bar`](./projects/codex-quota-bar/) | macOS 小工具 | 原生菜单栏 Codex 额度查看器 |
 | [`deepseek-harness-radar`](./projects/deepseek-harness-radar/) | ChatGPT 自动化 / Radar | DSH 官方与插件生态的每日观察、当前判断与历史 Delta |
-| [`RackTool`](./projects/racktool/) | 跨平台工具（V0.5 已通过） | Excel 机柜管理工具；Reader 到本地 GUI 已通过本地自动化门禁 |
+| [`RackTool`](./projects/racktool/) | 跨平台工具（V0.5 automated PASS） | Excel 机柜管理工具；RackCore + GuiSession/headless 已通过，Excel/WPS 与 macOS/Windows GUI 实机验证待完成 |
 
 ## 仓库结构
 

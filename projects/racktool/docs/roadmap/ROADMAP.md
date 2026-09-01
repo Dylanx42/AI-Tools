@@ -1,18 +1,23 @@
 # RackTool 开发路线图
 
-## 当前门禁状态（2026-08-31）
+## 当前门禁状态（2026-09-02）
 
 - Phase 0：PASS，详见 `docs/gates/PHASE0.md`。
-- V0.1 Reader：PASS，详见 `docs/gates/V0.1.md`。
-- V0.2 Profile：PASS，详见 `docs/gates/V0.2.md`。
-- V0.3 Identity & Mapping：PASS，详见 `docs/gates/V0.3.md`。
-- V0.4 Safe Sync：PASS，详见 `docs/gates/V0.4.md`。
-- V0.5 Local GUI：PASS，详见 `docs/gates/V0.5.md`。
-- 两类真实私有布局已冻结 Sheet 级 expected JSON、源文件 Hash 和持久验收记录；本地 Golden
-  regression 与完整结构审计通过。
+- V0.1 Reader：AUTOMATED PASS，详见 `docs/gates/V0.1.md`。
+- V0.2 Profile：AUTOMATED PASS，详见 `docs/gates/V0.2.md`。
+- V0.3 Identity & Mapping：AUTOMATED PASS，详见 `docs/gates/V0.3.md`。
+- V0.4 Safe Sync：AUTOMATED PASS；Microsoft Excel/WPS 实机打开及写回仍为
+  MANUAL VALIDATION PENDING，详见 `docs/gates/V0.4.md`。
+- V0.5 Local GUI：AUTOMATED PASS — RackCore + GuiSession/headless；macOS/Windows GUI 人工检查
+  仍为 MANUAL VALIDATION PENDING，详见 `docs/gates/V0.5.md`。
+- 当前整合证据见 `docs/gates/V0.5-integrated-audit.md`：full 112 passed / 0 skipped，P0/P1/P2 = 0。
+  其他 focused 数量是重叠复跑子集，不得相加。
+- 一个真实私有机柜 workbook 内的两类不同 Sheet 布局已冻结 expected JSON、源文件 Hash 和持久
+  验收记录；资产清单只作独立对账，不是第二个机柜布局 Golden。
 - 通用双轴 Profile 正确识别第一类真实布局；混合轴 Profile 正确识别第二类真实布局；错误或冲突
   Profile 会被拒绝。
-- 当前阶段：自动化 V0.5 已通过；后续未知布局工作流必须持续复跑 V0.1 到 V0.5 regression。
+- 当前审计环境未安装 PySide6，Qt widget window 未运行。后续未知布局工作流必须持续复跑 V0.1
+  到 V0.5 regression。
 
 ## 1. 总体策略
 
@@ -135,10 +140,10 @@
 
 验收：
 
-- 真实 XLSX 修改后 Office/WPS 可正常打开；
-- 冲突时拒绝写入；
-- 故意制造校验失败时原文件不受损；
-- regression tests 全通过。
+- 真实 XLSX 修改后 Office/WPS 可正常打开：**MANUAL VALIDATION PENDING**；
+- 冲突时拒绝写入：AUTOMATED PASS；
+- 故意制造校验失败时原文件不受损：AUTOMATED PASS；
+- regression tests 全通过：AUTOMATED PASS。
 
 ---
 
@@ -163,6 +168,12 @@
 
 - Drag & Drop；
 - 更友好的机柜可视化。
+
+验收状态：
+
+- RackCore + GuiSession/headless：AUTOMATED PASS；
+- macOS/Windows PySide6 GUI 人工检查：MANUAL VALIDATION PENDING；
+- 当前审计环境未安装 PySide6，Qt widget window 未运行。
 
 ---
 

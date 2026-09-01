@@ -2,7 +2,10 @@
 
 本目录是 RackTool 开工前置文档包。
 
-## 当前推荐使用流程
+> 历史说明：本文件记录 Phase 0 启动流程，不代表当前项目状态。当前入口与验收状态见
+> `README.md` 和 `docs/gates/V0.5-integrated-audit.md`。
+
+## Phase 0 当时推荐使用流程
 
 本包现在按“**本地 Codex 先落库 → GitHub 远端仓库 → Codex Cloud 正式开发**”的方式使用：
 
@@ -30,6 +33,8 @@
 9. `docs/research/codex-local-bootstrap-prompt.md`
 10. `docs/research/codex-cloud-kickoff-prompt.md`
 
-## 当前仍待补充
+## Phase 0 当时待补充（现已完成）
 
-真实 Golden Sample `.xlsx` 仍需后续补充。第一轮开发只允许使用 synthetic workbook 建立 Reader 与测试框架，不得根据截图猜测真实 Excel 结构。
+Phase 0 当时尚无真实 Golden Sample `.xlsx`。此缺口现已由一个真实私有机柜 workbook 内的两类
+Sheet-scoped Golden 布局补齐；资产清单不是第二个机柜 Golden。私有材料仍保持 Git 忽略，
+synthetic workbook 也始终不得冒充真实 Golden 或替代真实格式兼容性证据。
