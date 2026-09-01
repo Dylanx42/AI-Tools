@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
 from openpyxl import Workbook, load_workbook
@@ -159,6 +160,54 @@ def test_target_comment_blocks_multi_u_move_before_write(
     result = apply_writeback(path, project, plan)
 
     assert any(item.code == "unsupported-cell-comment" for item in plan.conflicts)
+    assert not any(item.code == "unsupported-threaded-comments" for item in plan.conflicts)
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert result.project == project
+    assert path.read_bytes() == original
+    assert list(tmp_path.glob("layout.xlsx.bak-*")) == []
+
+
+@pytest.mark.parametrize(
+    "package_part",
+    [
+        "xl/threadedComments/threadedComment1.xml",
+        "xl/persons/person.xml",
+    ],
+)
+def test_threaded_comment_package_parts_block_before_openpyxl_load(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    package_part: str,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    with ZipFile(path, "a") as package:
+        package.writestr(package_part, b"<unsupported-threaded-comment-marker />")
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    def unexpected_openpyxl_load(*args, **kwargs):
+        raise AssertionError("Safe Sync must inspect package markers before openpyxl load")
+
+    monkeypatch.setattr("racktool.core.sync.load_workbook", unexpected_openpyxl_load)
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    conflicts = [
+        item for item in plan.conflicts if item.code == "unsupported-threaded-comments"
+    ]
+    assert len(conflicts) == 1
+    assert f"part={package_part}" in conflicts[0].evidence
     assert result.status == "rejected"
     assert result.backup_path is None
     assert result.project == project

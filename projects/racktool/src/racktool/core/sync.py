@@ -5,6 +5,7 @@ from copy import copy
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
+from zipfile import BadZipFile, ZipFile
 
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -350,6 +351,36 @@ def _unsupported_action_metadata_conflicts(
     return conflicts
 
 
+def _unsupported_threaded_comment_conflicts(
+    source: Path,
+    action: WriteAction,
+) -> list[IdentityConflict]:
+    try:
+        with ZipFile(source, "r") as package:
+            unsupported_parts = sorted(
+                member
+                for member in package.namelist()
+                if member.lstrip("/").casefold().startswith(
+                    ("xl/threadedcomments/", "xl/persons/")
+                )
+            )
+    except (BadZipFile, OSError):
+        return []
+    if not unsupported_parts:
+        return []
+    return [
+        _conflict(
+            "unsupported-threaded-comments",
+            (
+                "The workbook contains modern threaded comments that openpyxl cannot "
+                "preserve safely"
+            ),
+            entity_ids=[action.device_id, action.rack_id],
+            evidence=[f"part={part}" for part in unsupported_parts],
+        )
+    ]
+
+
 def _target_range(
     old_range: str,
     old_rack: Rack,
@@ -427,7 +458,9 @@ def _workbook_layout_conflicts(
     source: Path,
     action: WriteAction,
 ) -> list[IdentityConflict]:
-    conflicts: list[IdentityConflict] = []
+    conflicts = _unsupported_threaded_comment_conflicts(source, action)
+    if conflicts:
+        return conflicts
     workbook = load_workbook(source, read_only=False, data_only=False)
     try:
         if action.sheet_name not in workbook.sheetnames:
