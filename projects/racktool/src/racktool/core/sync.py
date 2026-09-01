@@ -167,6 +167,189 @@ def _ranges_overlap(left: tuple[int, int, int, int], right: tuple[int, int, int,
     )
 
 
+def _cell_in_bounds(
+    row: int,
+    column: int,
+    bounds: tuple[int, int, int, int],
+) -> bool:
+    min_col, min_row, max_col, max_row = bounds
+    return min_row <= row <= max_row and min_col <= column <= max_col
+
+
+def _action_scopes(
+    bounds: tuple[int, int, int, int],
+    old_bounds: tuple[int, int, int, int],
+    new_bounds: tuple[int, int, int, int],
+) -> list[str]:
+    scopes: list[str] = []
+    if _ranges_overlap(bounds, old_bounds):
+        scopes.append("source")
+    if _ranges_overlap(bounds, new_bounds):
+        scopes.append("target")
+    return scopes
+
+
+def _defined_name_bounds(a1: str) -> tuple[int, int, int, int]:
+    min_col, min_row, max_col, max_row = range_boundaries(a1)
+    return (
+        min_col if min_col is not None else 1,
+        min_row if min_row is not None else 1,
+        max_col if max_col is not None else 16_384,
+        max_row if max_row is not None else 1_048_576,
+    )
+
+
+def _defined_name_conflicts(
+    workbook: OpenpyxlWorkbook,
+    sheet: Any,
+    action: WriteAction,
+    old_bounds: tuple[int, int, int, int],
+    new_bounds: tuple[int, int, int, int],
+) -> list[IdentityConflict]:
+    conflicts: list[IdentityConflict] = []
+    containers = (
+        ("workbook", workbook.defined_names),
+        ("worksheet", getattr(sheet, "defined_names", {})),
+    )
+    for name_scope, container in containers:
+        for defined_name in container.values():
+            try:
+                destinations = list(defined_name.destinations)
+            except (AttributeError, TypeError, ValueError):
+                destinations = []
+            attr_text = getattr(defined_name, "attr_text", None)
+            if (
+                not destinations
+                and name_scope == "worksheet"
+                and getattr(defined_name, "type", None) == "RANGE"
+                and isinstance(attr_text, str)
+            ):
+                try:
+                    _defined_name_bounds(attr_text)
+                except ValueError:
+                    pass
+                else:
+                    destinations = [(action.sheet_name, attr_text)]
+            for destination_sheet, destination_range in destinations:
+                if destination_sheet != action.sheet_name:
+                    continue
+                try:
+                    destination_bounds = _defined_name_bounds(destination_range)
+                except (TypeError, ValueError):
+                    continue
+                scopes = _action_scopes(destination_bounds, old_bounds, new_bounds)
+                if not scopes:
+                    continue
+                conflicts.append(
+                    _conflict(
+                        "unsupported-defined-name",
+                        (
+                            "The write action intersects an Excel defined name whose "
+                            "meaning Safe Sync cannot update safely"
+                        ),
+                        entity_ids=[action.device_id, action.rack_id],
+                        evidence=[
+                            f"defined_name={defined_name.name}",
+                            f"name_scope={name_scope}",
+                            f"range={destination_range}",
+                            f"scope={'+'.join(scopes)}",
+                        ],
+                    )
+                )
+    return conflicts
+
+
+def _unsupported_action_metadata_conflicts(
+    workbook: OpenpyxlWorkbook,
+    sheet: Any,
+    action: WriteAction,
+    old_bounds: tuple[int, int, int, int],
+    new_bounds: tuple[int, int, int, int],
+) -> list[IdentityConflict]:
+    conflicts: list[IdentityConflict] = []
+    action_cells = {
+        (row, column)
+        for min_col, min_row, max_col, max_row in (old_bounds, new_bounds)
+        for row in range(min_row, max_row + 1)
+        for column in range(min_col, max_col + 1)
+    }
+    for row, column in sorted(action_cells):
+        cell = sheet.cell(row, column)
+        scopes = []
+        if _cell_in_bounds(row, column, old_bounds):
+            scopes.append("source")
+        if _cell_in_bounds(row, column, new_bounds):
+            scopes.append("target")
+        coordinate = cell.coordinate
+        for metadata_kind, code in (
+            ("comment", "unsupported-cell-comment"),
+            ("hyperlink", "unsupported-cell-hyperlink"),
+        ):
+            if getattr(cell, metadata_kind, None) is None:
+                continue
+            conflicts.append(
+                _conflict(
+                    code,
+                    (
+                        f"The {'/'.join(scopes)} cell {coordinate} contains an Excel "
+                        f"{metadata_kind} that Safe Sync cannot move or overwrite safely"
+                    ),
+                    entity_ids=[action.device_id, action.rack_id],
+                    evidence=[
+                        f"cell={coordinate}",
+                        f"scope={'+'.join(scopes)}",
+                        f"metadata={metadata_kind}",
+                    ],
+                )
+            )
+
+    data_validations = getattr(sheet, "data_validations", None)
+    validations = (
+        getattr(data_validations, "dataValidation", ())
+        if data_validations is not None
+        else ()
+    )
+    for validation in validations:
+        sqref = getattr(validation, "sqref", None)
+        if sqref is None:
+            continue
+        for validation_range in sorted(sqref.ranges, key=str):
+            validation_bounds = (
+                validation_range.min_col,
+                validation_range.min_row,
+                validation_range.max_col,
+                validation_range.max_row,
+            )
+            scopes = _action_scopes(validation_bounds, old_bounds, new_bounds)
+            if not scopes:
+                continue
+            conflicts.append(
+                _conflict(
+                    "unsupported-data-validation",
+                    (
+                        "The write action intersects Excel data validation that Safe Sync "
+                        "cannot relocate or reinterpret safely"
+                    ),
+                    entity_ids=[action.device_id, action.rack_id],
+                    evidence=[
+                        f"range={validation_range}",
+                        f"scope={'+'.join(scopes)}",
+                        "metadata=data-validation",
+                    ],
+                )
+            )
+    conflicts.extend(
+        _defined_name_conflicts(
+            workbook,
+            sheet,
+            action,
+            old_bounds,
+            new_bounds,
+        )
+    )
+    return conflicts
+
+
 def _target_range(
     old_range: str,
     old_rack: Rack,
@@ -258,6 +441,15 @@ def _workbook_layout_conflicts(
         sheet = workbook[action.sheet_name]
         old_bounds = _bounds(action.old_range)
         new_bounds = _bounds(action.new_range)
+        conflicts.extend(
+            _unsupported_action_metadata_conflicts(
+                workbook,
+                sheet,
+                action,
+                old_bounds,
+                new_bounds,
+            )
+        )
         normalized_old = action.old_range.replace("$", "")
         for merged in sheet.merged_cells.ranges:
             merged_range = str(merged).replace("$", "")

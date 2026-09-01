@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
 from openpyxl.styles import Font, PatternFill
+from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.cli.main import main
@@ -48,7 +51,7 @@ def _make_layout(path: Path, *, blank_target_merge: bool = False) -> None:
     workbook.save(path)
 
 
-def _make_multicolumn_layout(path: Path) -> None:
+def _make_multicolumn_layout(path: Path, *, merge_device: bool = True) -> None:
     workbook = Workbook()
     sheet = workbook.active
     assert sheet is not None
@@ -57,7 +60,8 @@ def _make_multicolumn_layout(path: Path) -> None:
     sheet["A1"] = "RACK-WIDE"
     _fill_descending_axis(sheet, 1, 2, 12)
     _fill_descending_axis(sheet, 4, 2, 12)
-    sheet.merge_cells("B2:C2")
+    if merge_device:
+        sheet.merge_cells("B2:C2")
     sheet["B2"] = "双列设备"
     workbook.save(path)
 
@@ -126,6 +130,321 @@ def test_multi_u_move_preserves_height_style_and_merge_shape(tmp_path: Path) -> 
         assert workbook.active["B2"].value in (None, "")
     finally:
         workbook.close()
+
+
+@pytest.mark.parametrize("coordinate", ["B8", "B9"])
+def test_target_comment_blocks_multi_u_move_before_write(
+    tmp_path: Path,
+    coordinate: str,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    workbook.active[coordinate].comment = Comment("unknown note", "audit")
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(item.code == "unsupported-cell-comment" for item in plan.conflicts)
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert result.project == project
+    assert path.read_bytes() == original
+    assert list(tmp_path.glob("layout.xlsx.bak-*")) == []
+
+
+@pytest.mark.parametrize("coordinate", ["B8", "B9"])
+def test_target_hyperlink_blocks_multi_u_move_before_write(
+    tmp_path: Path,
+    coordinate: str,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    workbook.active[coordinate] = " "
+    workbook.active[coordinate].hyperlink = "https://example.invalid/unknown"
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(item.code == "unsupported-cell-hyperlink" for item in plan.conflicts)
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("metadata_kind", ["comment", "hyperlink"])
+def test_source_annotation_blocks_move_before_write(
+    tmp_path: Path,
+    metadata_kind: str,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    if metadata_kind == "comment":
+        workbook.active["B2"].comment = Comment("device note", "audit")
+    else:
+        workbook.active["B2"].hyperlink = "https://example.invalid/device"
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(
+        item.code == f"unsupported-cell-{metadata_kind}" for item in plan.conflicts
+    )
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("metadata_kind", ["comment", "hyperlink"])
+def test_source_non_anchor_annotation_blocks_move_before_write(
+    tmp_path: Path,
+    metadata_kind: str,
+) -> None:
+    path = tmp_path / "wide.xlsx"
+    _make_multicolumn_layout(path, merge_device=False)
+    workbook = load_workbook(path)
+    if metadata_kind == "comment":
+        workbook.active["C2"].comment = Comment("lane note", "audit")
+    else:
+        workbook.active["C2"] = " "
+        workbook.active["C2"].hyperlink = "https://example.invalid/lane"
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "双列设备")
+    mapping = next(
+        item
+        for item in project.mappings
+        if item.mapping_kind == "device" and item.device_id == device.device_id
+    )
+    project = replace(
+        project,
+        mappings=[
+            replace(item, source_range="B2:C2")
+            if item.mapping_id == mapping.mapping_id
+            else item
+            for item in project.mappings
+        ],
+    )
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        4,
+        4,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(
+        item.code == f"unsupported-cell-{metadata_kind}" for item in plan.conflicts
+    )
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("validation_range", ["B2:B3", "B8:B9"])
+def test_data_validation_on_action_range_blocks_move(
+    tmp_path: Path,
+    validation_range: str,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    validation = DataValidation(type="list", formula1='"allowed,values"')
+    workbook.active.add_data_validation(validation)
+    validation.add(validation_range)
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(item.code == "unsupported-data-validation" for item in plan.conflicts)
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize("defined_range", ["$B$2:$B$3", "$B$8:$B$9"])
+def test_defined_name_on_action_range_blocks_move(
+    tmp_path: Path,
+    defined_range: str,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    workbook.defined_names.add(
+        DefinedName(
+            "action_region",
+            attr_text=f"'{workbook.active.title}'!{defined_range}",
+        )
+    )
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(item.code == "unsupported-defined-name" for item in plan.conflicts)
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert path.read_bytes() == original
+
+
+def test_worksheet_scoped_defined_name_on_action_range_blocks_move(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    workbook.active.defined_names.add(
+        DefinedName("local_action_region", attr_text="$B$8:$B$9")
+    )
+    workbook.save(path)
+    workbook.close()
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert any(item.code == "unsupported-defined-name" for item in plan.conflicts)
+    assert result.status == "rejected"
+    assert result.backup_path is None
+    assert path.read_bytes() == original
+
+
+def test_metadata_outside_action_ranges_is_preserved(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    workbook.active["Z1"].comment = Comment("keep this note", "audit")
+    workbook.active["Z1"].hyperlink = "https://example.invalid/keep"
+    validation = DataValidation(
+        type="list",
+        formula1='"keep,values"',
+        allow_blank=True,
+    )
+    workbook.active.add_data_validation(validation)
+    validation.add("Z2:Z3")
+    workbook.defined_names.add(
+        DefinedName(
+            "unrelated_region",
+            attr_text=f"'{workbook.active.title}'!$Z$1:$Z$3",
+        )
+    )
+    workbook.save(path)
+    workbook.close()
+    project = import_workbook(path)
+    device = _device(project, "设备 A")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        5,
+        6,
+        workbook_path=path,
+    )
+    result = apply_writeback(path, project, plan)
+
+    assert not plan.conflicts
+    assert result.status == "applied"
+    reloaded = load_workbook(path)
+    try:
+        assert reloaded.active["Z1"].comment is not None
+        assert reloaded.active["Z1"].comment.text == "keep this note"
+        assert reloaded.active["Z1"].comment.author == "audit"
+        assert reloaded.active["Z1"].hyperlink is not None
+        assert reloaded.active["Z1"].hyperlink.target == "https://example.invalid/keep"
+        validations = list(reloaded.active.data_validations.dataValidation)
+        assert len(validations) == 1
+        assert str(validations[0].sqref) == "Z2:Z3"
+        assert validations[0].formula1 == '"keep,values"'
+        assert validations[0].allow_blank is True
+        defined_name = reloaded.defined_names["unrelated_region"]
+        assert defined_name.attr_text == "'机柜'!$Z$1:$Z$3"
+        assert list(defined_name.destinations) == [("机柜", "$Z$1:$Z$3")]
+    finally:
+        reloaded.close()
 
 
 def test_height_change_is_rejected_without_changing_source(tmp_path: Path) -> None:
