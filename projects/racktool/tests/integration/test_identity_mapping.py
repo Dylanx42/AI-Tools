@@ -12,6 +12,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.cli.main import main
 from racktool.core.project import import_workbook, rescan_workbook, validate_project
+from racktool.core.service import import_project, rescan_project
 from racktool.models.project import RackProject
 from racktool.persistence import load_project, save_project
 
@@ -88,6 +89,17 @@ def _mapping_for(project: RackProject, device_id: str):
     )
 
 
+def _replace_with_moved_two_u_object(path: Path, text: str) -> None:
+    workbook = load_workbook(path)
+    sheet = workbook.active
+    sheet["B2"] = None
+    sheet.merge_cells("B7:B8")
+    sheet["B7"] = text
+    sheet["B7"].font = Font(bold=True, color="FF0000")
+    workbook.save(path)
+    workbook.close()
+
+
 def test_import_device_mapping_includes_rack_identity(tmp_path: Path) -> None:
     path = tmp_path / "layout.xlsx"
     _make_layout(path)
@@ -120,6 +132,126 @@ def test_device_range_swap_preserves_both_identities(tmp_path: Path) -> None:
     assert {item.display_text: item.device_id for item in result.project.devices} == ids
     assert _mapping_for(result.project, ids["设备 A"]).source_range == "B5"
     assert _mapping_for(result.project, ids["设备 B"]).source_range == "B2"
+
+
+def test_same_text_with_conflicting_range_height_and_style_is_rejected(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    imported = import_workbook(path)
+    original = _device_by_text(imported, "设备 A")
+    _replace_with_moved_two_u_object(path, "设备 A")
+
+    result = rescan_workbook(path, imported)
+
+    assert result.accepted is False
+    assert result.project == imported
+    assert result.created_device_ids == ()
+    conflict = next(
+        item
+        for item in result.conflicts
+        if item.code == "conflicting-device-identity-evidence"
+    )
+    assert original.device_id in conflict.entity_ids
+    assert any("source=机柜!B7:B8" in item for item in conflict.evidence)
+    assert any("candidate_signature=" in item for item in conflict.evidence)
+
+
+def test_service_rejects_uncorroborated_text_without_persisting_database(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    database = tmp_path / "project.sqlite"
+    _make_layout(path)
+    imported = import_project(path, database)
+    database_before = database.read_bytes()
+    _replace_with_moved_two_u_object(path, "设备 A")
+
+    result = rescan_project(path, database)
+
+    assert result.accepted is False
+    assert result.project == imported
+    assert any(
+        item.code == "conflicting-device-identity-evidence"
+        for item in result.conflicts
+    )
+    assert load_project(database) == imported
+    assert database.read_bytes() == database_before
+
+
+def test_same_text_move_with_compatible_signature_preserves_identity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    workbook = load_workbook(path)
+    workbook.active["B2"].font = Font(bold=True, color="FF0000")
+    workbook.save(path)
+    workbook.close()
+    imported = import_workbook(path)
+    original = _device_by_text(imported, "设备 A")
+
+    workbook = load_workbook(path)
+    sheet = workbook.active
+    old_style = copy(sheet["B2"]._style)
+    sheet["B2"] = None
+    sheet["B8"] = "设备 A"
+    sheet["B8"]._style = old_style
+    workbook.save(path)
+    workbook.close()
+
+    result = rescan_workbook(path, imported)
+
+    assert result.accepted
+    assert _device_by_text(result.project, "设备 A").device_id == original.device_id
+    assert _mapping_for(result.project, original.device_id).source_range == "B8"
+
+
+def test_conflicting_text_and_range_evidence_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    imported = import_workbook(path)
+    device_a = _device_by_text(imported, "设备 A")
+    device_b = _device_by_text(imported, "设备 B")
+
+    workbook = load_workbook(path)
+    sheet = workbook.active
+    sheet["B2"] = None
+    sheet["B5"] = "设备 A"
+    workbook.save(path)
+    workbook.close()
+
+    result = rescan_workbook(path, imported)
+
+    assert result.accepted is False
+    assert result.project == imported
+    conflict = next(
+        item
+        for item in result.conflicts
+        if item.code == "conflicting-device-identity-evidence"
+    )
+    assert set(conflict.entity_ids) == {device_a.device_id, device_b.device_id}
+    assert any(f"range_device_id={device_b.device_id}" in item for item in conflict.evidence)
+
+
+def test_device_rename_at_same_range_preserves_identity(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    imported = import_workbook(path)
+    original = _device_by_text(imported, "设备 A")
+
+    workbook = load_workbook(path)
+    workbook.active["B2"] = "设备 A-同位置改名"
+    workbook.save(path)
+    workbook.close()
+
+    result = rescan_workbook(path, imported)
+
+    assert result.accepted
+    renamed = _device_by_text(result.project, "设备 A-同位置改名")
+    assert renamed.device_id == original.device_id
+    assert _mapping_for(result.project, original.device_id).source_range == "B2"
 
 
 def test_rename_and_move_uses_unique_style_and_height_evidence(tmp_path: Path) -> None:

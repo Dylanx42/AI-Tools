@@ -803,6 +803,8 @@ def _assign_devices(
     available_old = set(old_devices)
     available_new = set(new_by_id)
     assignments: dict[str, str] = {}
+    conflicts: list[IdentityConflict] = []
+    blocked_new: set[str] = set()
 
     def accept(matches: dict[str, str]) -> None:
         for candidate_id, device_id in matches.items():
@@ -811,24 +813,88 @@ def _assign_devices(
                 available_new.remove(candidate_id)
                 available_old.remove(device_id)
 
-    accept(
-        _unique_pairs(
-            {
-                device_id: device.display_text.casefold()
-                for device_id, device in old_devices.items()
-            },
-            {
-                candidate_id: item.device.display_text.casefold()
-                for candidate_id, item in new_by_id.items()
-            },
-            available_old,
-            available_new,
-        )
-    )
-
     by_range = _range_mappings(project, "device")
-    conflicts: list[IdentityConflict] = []
-    for candidate_id in sorted(available_new):
+    text_pairs = _unique_pairs(
+        {
+            device_id: device.display_text.casefold()
+            for device_id, device in old_devices.items()
+        },
+        {
+            candidate_id: item.device.display_text.casefold()
+            for candidate_id, item in new_by_id.items()
+        },
+        available_old,
+        available_new,
+    )
+    stored_signatures = {
+        device_id: _device_signature(device, old_placements.get(device_id))
+        for device_id, device in old_devices.items()
+    }
+    candidate_signatures = {
+        candidate_id: _candidate_device_signature(item)
+        for candidate_id, item in new_by_id.items()
+    }
+    structurally_corroborated_text_ids = {
+        device_id
+        for candidate_id, device_id in text_pairs.items()
+        if candidate_signatures[candidate_id] == stored_signatures[device_id]
+    }
+    corroborated_text_matches: dict[str, str] = {}
+    for candidate_id, device_id in sorted(text_pairs.items()):
+        item = new_by_id[candidate_id]
+        mapped = by_range.get((item.sheet_name, item.device.source_range))
+        stored_signature = stored_signatures[device_id]
+        candidate_signature = candidate_signatures[candidate_id]
+        mapped_signature = (
+            stored_signatures[mapped]
+            if mapped is not None and mapped in stored_signatures
+            else None
+        )
+        range_conflicts = mapped is not None and mapped != device_id
+        structure_corroborates = candidate_signature == stored_signature
+        structure_distinguishes = (
+            mapped_signature is not None
+            and candidate_signature != mapped_signature
+        )
+        displaced_owner_is_accounted_for = (
+            mapped in structurally_corroborated_text_ids
+        )
+        if mapped == device_id or (
+            structure_corroborates
+            and (
+                not range_conflicts
+                or structure_distinguishes
+                or displaced_owner_is_accounted_for
+            )
+        ):
+            corroborated_text_matches[candidate_id] = device_id
+            continue
+        entity_ids = [device_id]
+        if mapped is not None and mapped != device_id:
+            entity_ids.append(mapped)
+        conflicts.append(
+            _conflict(
+                "conflicting-device-identity-evidence",
+                "Matching display text lacks corroborating source or structural evidence; "
+                "refusing to reuse a device identity",
+                entity_ids=entity_ids,
+                candidate_refs=[candidate_id],
+                evidence=[
+                    f"display_text={item.device.display_text}",
+                    f"text_device_id={device_id}",
+                    f"source={item.sheet_name}!{item.device.source_range}",
+                    f"range_device_id={mapped}",
+                    f"stored_signature={stored_signature!r}",
+                    f"candidate_signature={candidate_signature!r}",
+                    f"range_signature={mapped_signature!r}",
+                    f"range_owner_accounted_for={displaced_owner_is_accounted_for}",
+                ],
+            )
+        )
+        blocked_new.add(candidate_id)
+    accept(corroborated_text_matches)
+
+    for candidate_id in sorted(available_new - blocked_new):
         item = new_by_id[candidate_id]
         mapped = by_range.get((item.sheet_name, item.device.source_range))
         if mapped is not None and mapped not in available_old:
@@ -845,7 +911,7 @@ def _assign_devices(
                 )
             )
     range_matches: dict[str, str] = {}
-    for candidate_id in available_new:
+    for candidate_id in available_new - blocked_new:
         item = new_by_id[candidate_id]
         mapped = by_range.get((item.sheet_name, item.device.source_range))
         if mapped in available_old:
@@ -866,7 +932,7 @@ def _assign_devices(
                 for candidate_id, item in new_by_id.items()
             },
             available_old,
-            available_new,
+            available_new - blocked_new,
         )
     )
 
@@ -876,7 +942,7 @@ def _assign_devices(
         old_groups[
             _device_signature(old_devices[device_id], old_placements.get(device_id))
         ].append(device_id)
-    for candidate_id in available_new:
+    for candidate_id in available_new - blocked_new:
         new_groups[_candidate_device_signature(new_by_id[candidate_id])].append(
             candidate_id
         )
