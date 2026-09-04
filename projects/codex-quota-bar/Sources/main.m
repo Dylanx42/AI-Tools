@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 
 static NSString *const QuotaErrorDomain = @"app.codexquotabar.desktop";
+static NSString *const QuotaHistoryHeader = @"recorded_at,primary_used_percent,primary_remaining_percent,primary_window_minutes,primary_resets_at,secondary_used_percent,secondary_remaining_percent,secondary_window_minutes,secondary_resets_at\n";
 
 typedef NS_ENUM(NSInteger, QuotaErrorCode) {
     QuotaErrorCodexNotFound = 1,
@@ -365,6 +366,10 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 @property(nonatomic) NSInteger consecutiveFailures;
 @property(nonatomic, strong, nullable) NSDate *lastRefreshCompletedAt;
 @property(nonatomic, strong) NSDateFormatter *dateFormatter;
+@property(nonatomic, strong) NSISO8601DateFormatter *historyDateFormatter;
+@property(nonatomic, strong, nullable) NSURL *historyFileURL;
+@property(nonatomic, copy, nullable) NSString *lastHistorySignature;
+@property(nonatomic) NSInteger historyRecordCount;
 @end
 
 @implementation AppDelegate
@@ -377,12 +382,17 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         _dateFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
         _dateFormatter.timeZone = NSTimeZone.localTimeZone;
         _dateFormatter.dateFormat = @"M月d日 HH:mm";
+        _historyDateFormatter = [NSISO8601DateFormatter new];
+        _historyDateFormatter.timeZone = NSTimeZone.localTimeZone;
+        _historyDateFormatter.formatOptions = NSISO8601DateFormatWithInternetDateTime |
+                                              NSISO8601DateFormatWithFractionalSeconds;
     }
     return self;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    [self prepareUsageHistory];
     [self configureStatusItem];
 
     [NSNotificationCenter.defaultCenter addObserver:self
@@ -457,6 +467,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
             }
             self.consecutiveFailures = 0;
             self.snapshot = snapshot;
+            [self recordSnapshotIfChanged:snapshot];
             self.lastError = nil;
             self.lastRefreshCompletedAt = snapshot.updatedAt;
             nextInterval = [self nextSuccessfulRefreshIntervalChanged:changed];
@@ -549,6 +560,103 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     [NSApp terminate:nil];
 }
 
+- (void)prepareUsageHistory {
+    NSFileManager *fileManager = NSFileManager.defaultManager;
+    NSError *error = nil;
+    NSURL *applicationSupportURL = [fileManager URLForDirectory:NSApplicationSupportDirectory
+                                                       inDomain:NSUserDomainMask
+                                              appropriateForURL:nil
+                                                         create:YES
+                                                          error:&error];
+    if (!applicationSupportURL) {
+        NSLog(@"CodexQuotaBar could not locate Application Support: %@", error.localizedDescription);
+        return;
+    }
+
+    NSURL *directoryURL = [applicationSupportURL URLByAppendingPathComponent:@"CodexQuotaBar" isDirectory:YES];
+    if (![fileManager createDirectoryAtURL:directoryURL
+               withIntermediateDirectories:YES
+                                attributes:nil
+                                     error:&error]) {
+        NSLog(@"CodexQuotaBar could not create history directory: %@", error.localizedDescription);
+        return;
+    }
+
+    NSURL *fileURL = [directoryURL URLByAppendingPathComponent:@"quota-history.csv" isDirectory:NO];
+    if (![fileManager fileExistsAtPath:fileURL.path]) {
+        if (![QuotaHistoryHeader writeToURL:fileURL atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
+            NSLog(@"CodexQuotaBar could not create history file: %@", error.localizedDescription);
+            return;
+        }
+        [fileManager setAttributes:@{NSFilePosixPermissions: @0600} ofItemAtPath:fileURL.path error:nil];
+    }
+
+    NSString *contents = [NSString stringWithContentsOfURL:fileURL
+                                                  encoding:NSUTF8StringEncoding
+                                                     error:&error];
+    if (!contents) {
+        NSLog(@"CodexQuotaBar could not read history file: %@", error.localizedDescription);
+        return;
+    }
+
+    self.historyFileURL = fileURL;
+    self.historyRecordCount = 0;
+    self.lastHistorySignature = nil;
+
+    NSArray<NSString *> *lines = [contents componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    for (NSUInteger index = 1; index < lines.count; index++) {
+        NSString *line = lines[index];
+        if (line.length == 0) continue;
+        NSArray<NSString *> *columns = [line componentsSeparatedByString:@","];
+        if (columns.count != 9) continue;
+
+        self.lastHistorySignature = [[columns subarrayWithRange:NSMakeRange(1, 8)] componentsJoinedByString:@","];
+        self.historyRecordCount += 1;
+    }
+}
+
+- (NSArray<NSString *> *)historyFieldsForWindow:(nullable QuotaWindow *)window {
+    if (!window) return @[@"", @"", @"", @""];
+    return @[
+        [NSString stringWithFormat:@"%ld", (long)window.usedPercent],
+        [NSString stringWithFormat:@"%ld", (long)window.remainingPercent],
+        [NSString stringWithFormat:@"%ld", (long)window.durationMinutes],
+        [self.historyDateFormatter stringFromDate:window.resetsAt]
+    ];
+}
+
+- (void)recordSnapshotIfChanged:(QuotaSnapshot *)snapshot {
+    if (!self.historyFileURL) [self prepareUsageHistory];
+    if (!self.historyFileURL) return;
+
+    NSMutableArray<NSString *> *fields = [NSMutableArray array];
+    [fields addObjectsFromArray:[self historyFieldsForWindow:snapshot.primary]];
+    [fields addObjectsFromArray:[self historyFieldsForWindow:snapshot.secondary]];
+    NSString *signature = [fields componentsJoinedByString:@","];
+    if ([signature isEqualToString:self.lastHistorySignature]) return;
+
+    NSString *recordedAt = [self.historyDateFormatter stringFromDate:snapshot.updatedAt];
+    NSString *line = [NSString stringWithFormat:@"%@,%@\n", recordedAt, signature];
+    NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
+    NSError *error = nil;
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingToURL:self.historyFileURL error:&error];
+    if (!handle || ![handle seekToEndReturningOffset:nil error:&error] || ![handle writeData:data error:&error]) {
+        NSLog(@"CodexQuotaBar could not append history: %@", error.localizedDescription);
+        [handle closeAndReturnError:nil];
+        return;
+    }
+    [handle closeAndReturnError:nil];
+
+    self.lastHistorySignature = signature;
+    self.historyRecordCount += 1;
+}
+
+- (void)openUsageHistory {
+    if (self.historyFileURL && ![NSWorkspace.sharedWorkspace openURL:self.historyFileURL]) {
+        NSLog(@"CodexQuotaBar could not open history file: %@", self.historyFileURL.path);
+    }
+}
+
 - (void)updateStatusDisplay {
     NSStatusBarButton *button = self.statusItem.button;
     if (self.snapshot) {
@@ -597,6 +705,19 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         errorItem.image = [NSImage imageWithSystemSymbolName:@"exclamationmark.triangle" accessibilityDescription:@"错误"];
     } else {
         [self addDisabledItem:@"正在读取额度…" toMenu:menu];
+    }
+
+    if (self.historyFileURL) {
+        [menu addItem:NSMenuItem.separatorItem];
+        NSMenuItem *historyItem = [[NSMenuItem alloc]
+            initWithTitle:[NSString stringWithFormat:@"使用趋势：%ld 条记录", (long)self.historyRecordCount]
+                    action:@selector(openUsageHistory)
+             keyEquivalent:@""];
+        historyItem.target = self;
+        historyItem.image = [NSImage imageWithSystemSymbolName:@"chart.xyaxis.line"
+                                      accessibilityDescription:@"使用趋势"];
+        historyItem.toolTip = self.historyFileURL.path;
+        [menu addItem:historyItem];
     }
 
     [menu addItem:NSMenuItem.separatorItem];
