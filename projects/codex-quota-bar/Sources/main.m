@@ -52,6 +52,8 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 @property(nonatomic) BOOL refreshing;
 - (void)fetch:(QuotaCompletion)completion;
 - (void)cancel;
+- (nullable NSURL *)codexExecutableURL;
+- (NSDictionary<NSString *, NSString *> *)launchEnvironmentForExecutableURL:(NSURL *)executableURL;
 @end
 
 @implementation CodexQuotaService
@@ -97,6 +99,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 
         task.executableURL = executableURL;
         task.arguments = @[@"app-server"];
+        task.environment = [self launchEnvironmentForExecutableURL:executableURL];
         task.standardInput = inputPipe;
         task.standardOutput = outputPipe;
         task.standardError = errorPipe;
@@ -131,6 +134,10 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
             return;
         }
 
+        NSString *clientVersion = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+        if (![clientVersion isKindOfClass:NSString.class] || clientVersion.length == 0) {
+            clientVersion = @"unknown";
+        }
         NSDictionary *initialize = @{
             @"method": @"initialize",
             @"id": @0,
@@ -138,7 +145,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
                 @"clientInfo": @{
                     @"name": @"codex_quota_bar",
                     @"title": @"Codex Quota Bar",
-                    @"version": @"0.2.0"
+                    @"version": clientVersion
                 }
             }
         };
@@ -176,6 +183,37 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         }
     }
     return nil;
+}
+
+- (NSDictionary<NSString *, NSString *> *)launchEnvironmentForExecutableURL:(NSURL *)executableURL {
+    NSMutableDictionary<NSString *, NSString *> *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+    NSMutableOrderedSet<NSString *> *pathEntries = [NSMutableOrderedSet orderedSet];
+    NSString *home = NSHomeDirectory();
+    NSArray<NSString *> *preferredEntries = @[
+        executableURL.URLByDeletingLastPathComponent.path ?: @"",
+        @"/opt/homebrew/bin",
+        @"/usr/local/bin",
+        [home stringByAppendingPathComponent:@".local/bin"],
+        [home stringByAppendingPathComponent:@".volta/bin"],
+        [home stringByAppendingPathComponent:@".asdf/shims"],
+        [home stringByAppendingPathComponent:@".local/share/mise/shims"],
+        @"/usr/bin",
+        @"/bin",
+        @"/usr/sbin",
+        @"/sbin"
+    ];
+
+    for (NSString *entry in preferredEntries) {
+        if (entry.length > 0) [pathEntries addObject:entry];
+    }
+
+    NSString *inheritedPath = environment[@"PATH"];
+    for (NSString *entry in [inheritedPath componentsSeparatedByString:@":"]) {
+        if (entry.length > 0) [pathEntries addObject:entry];
+    }
+
+    environment[@"PATH"] = [pathEntries.array componentsJoinedByString:@":"];
+    return environment;
 }
 
 - (void)consumeData:(NSData *)data {
