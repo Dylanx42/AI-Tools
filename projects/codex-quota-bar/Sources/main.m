@@ -42,6 +42,180 @@ static NSError *QuotaError(QuotaErrorCode code, NSString *description) {
 @implementation QuotaSnapshot
 @end
 
+@interface QuotaHistoryPoint : NSObject
+@property(nonatomic, strong) NSDate *recordedAt;
+@property(nonatomic, strong, nullable) NSNumber *primaryRemainingPercent;
+@property(nonatomic, strong, nullable) NSNumber *secondaryRemainingPercent;
+@end
+
+@implementation QuotaHistoryPoint
+@end
+
+@interface QuotaTrendView : NSView
+@property(nonatomic, copy) NSArray<QuotaHistoryPoint *> *points;
+@property(nonatomic) NSInteger totalRecordCount;
+@property(nonatomic, strong) NSDateFormatter *axisDateFormatter;
+- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
+               totalRecordCount:(NSInteger)totalRecordCount;
+@end
+
+@implementation QuotaTrendView
+
+- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
+               totalRecordCount:(NSInteger)totalRecordCount {
+    self = [super initWithFrame:NSMakeRect(0, 0, 340, 172)];
+    if (self) {
+        _points = [points copy];
+        _totalRecordCount = totalRecordCount;
+        _axisDateFormatter = [NSDateFormatter new];
+        _axisDateFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+        _axisDateFormatter.timeZone = NSTimeZone.localTimeZone;
+        _axisDateFormatter.dateFormat = @"M/d HH:mm";
+    }
+    return self;
+}
+
+- (BOOL)isFlipped {
+    return YES;
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    [super drawRect:dirtyRect];
+
+    NSDictionary *titleAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: NSColor.labelColor
+    };
+    NSDictionary *secondaryAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:9],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+
+    [@"使用趋势 · 剩余额度" drawAtPoint:NSMakePoint(14, 8) withAttributes:titleAttributes];
+    NSString *countText = [NSString stringWithFormat:@"%ld 条记录", (long)self.totalRecordCount];
+    NSSize countSize = [countText sizeWithAttributes:secondaryAttributes];
+    [countText drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width - 14, 11)
+            withAttributes:secondaryAttributes];
+
+    QuotaHistoryPoint *latest = self.points.lastObject;
+    NSString *primaryText = latest.primaryRemainingPercent
+        ? [NSString stringWithFormat:@"5 小时 %@%%", latest.primaryRemainingPercent]
+        : @"5 小时 —";
+    NSString *secondaryText = latest.secondaryRemainingPercent
+        ? [NSString stringWithFormat:@"7 天 %@%%", latest.secondaryRemainingPercent]
+        : @"7 天 —";
+    CGFloat legendX = [self drawLegendAtX:14 y:31 color:NSColor.systemBlueColor text:primaryText];
+    [self drawLegendAtX:legendX + 18 y:31 color:NSColor.systemPurpleColor text:secondaryText];
+
+    NSRect chartRect = NSMakeRect(38, 57, NSWidth(self.bounds) - 52, 82);
+    [self drawGridInRect:chartRect labelAttributes:secondaryAttributes];
+
+    if (self.points.count == 0) {
+        [self drawCenteredText:@"等待首次额度记录" inRect:chartRect attributes:secondaryAttributes];
+        return;
+    }
+
+    NSDate *firstDate = self.points.firstObject.recordedAt;
+    NSDate *lastDate = self.points.lastObject.recordedAt;
+    [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect firstDate:firstDate lastDate:lastDate];
+    [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect firstDate:firstDate lastDate:lastDate];
+
+    if (self.points.count == 1) {
+        [self drawCenteredText:@"已建立起点，额度变化后形成趋势线"
+                       inRect:NSMakeRect(NSMinX(chartRect), NSMidY(chartRect) - 7, NSWidth(chartRect), 14)
+                   attributes:secondaryAttributes];
+        NSString *dateText = [self.axisDateFormatter stringFromDate:firstDate];
+        NSSize dateSize = [dateText sizeWithAttributes:secondaryAttributes];
+        [dateText drawAtPoint:NSMakePoint(NSMidX(chartRect) - dateSize.width / 2, NSMaxY(chartRect) + 7)
+               withAttributes:secondaryAttributes];
+    } else {
+        NSString *firstText = [self.axisDateFormatter stringFromDate:firstDate];
+        NSString *lastText = [self.axisDateFormatter stringFromDate:lastDate];
+        [firstText drawAtPoint:NSMakePoint(NSMinX(chartRect), NSMaxY(chartRect) + 7)
+                withAttributes:secondaryAttributes];
+        NSSize lastSize = [lastText sizeWithAttributes:secondaryAttributes];
+        [lastText drawAtPoint:NSMakePoint(NSMaxX(chartRect) - lastSize.width, NSMaxY(chartRect) + 7)
+               withAttributes:secondaryAttributes];
+    }
+}
+
+- (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text {
+    [color setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 3, 7, 7)] fill];
+    NSDictionary *attributes = @{
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.labelColor
+    };
+    [text drawAtPoint:NSMakePoint(x + 11, y) withAttributes:attributes];
+    return x + 11 + [text sizeWithAttributes:attributes].width;
+}
+
+- (void)drawGridInRect:(NSRect)chartRect labelAttributes:(NSDictionary *)labelAttributes {
+    for (NSNumber *level in @[@100, @50, @0]) {
+        CGFloat y = NSMinY(chartRect) + (100.0 - level.doubleValue) / 100.0 * NSHeight(chartRect);
+        NSString *label = [NSString stringWithFormat:@"%@", level];
+        NSSize size = [label sizeWithAttributes:labelAttributes];
+        [label drawAtPoint:NSMakePoint(NSMinX(chartRect) - size.width - 6, y - size.height / 2)
+            withAttributes:labelAttributes];
+
+        NSBezierPath *gridLine = [NSBezierPath bezierPath];
+        [gridLine moveToPoint:NSMakePoint(NSMinX(chartRect), y)];
+        [gridLine lineToPoint:NSMakePoint(NSMaxX(chartRect), y)];
+        gridLine.lineWidth = 0.5;
+        [[NSColor.separatorColor colorWithAlphaComponent:0.55] setStroke];
+        [gridLine stroke];
+    }
+}
+
+- (void)drawSeriesPrimary:(BOOL)primary
+                    color:(NSColor *)color
+                   inRect:(NSRect)chartRect
+                firstDate:(NSDate *)firstDate
+                 lastDate:(NSDate *)lastDate {
+    NSTimeInterval span = [lastDate timeIntervalSinceDate:firstDate];
+    NSMutableArray<NSValue *> *displayPoints = [NSMutableArray array];
+
+    for (QuotaHistoryPoint *point in self.points) {
+        NSNumber *value = primary ? point.primaryRemainingPercent : point.secondaryRemainingPercent;
+        if (!value) continue;
+        CGFloat x = span > 0
+            ? NSMinX(chartRect) + [point.recordedAt timeIntervalSinceDate:firstDate] / span * NSWidth(chartRect)
+            : NSMidX(chartRect);
+        CGFloat clampedValue = MAX(0.0, MIN(100.0, value.doubleValue));
+        CGFloat y = NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect);
+        [displayPoints addObject:[NSValue valueWithPoint:NSMakePoint(x, y)]];
+    }
+
+    if (displayPoints.count == 0) return;
+    NSBezierPath *line = [NSBezierPath bezierPath];
+    line.lineWidth = 2.0;
+    line.lineCapStyle = NSLineCapStyleRound;
+    line.lineJoinStyle = NSLineJoinStyleRound;
+    [line moveToPoint:displayPoints.firstObject.pointValue];
+    for (NSUInteger index = 1; index < displayPoints.count; index++) {
+        [line lineToPoint:displayPoints[index].pointValue];
+    }
+    [color setStroke];
+    [line stroke];
+
+    for (NSUInteger index = 0; index < displayPoints.count; index++) {
+        if (displayPoints.count > 12 && index + 1 != displayPoints.count) continue;
+        NSPoint point = displayPoints[index].pointValue;
+        [color setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(point.x - 2.5, point.y - 2.5, 5, 5)] fill];
+    }
+}
+
+- (void)drawCenteredText:(NSString *)text
+                   inRect:(NSRect)rect
+               attributes:(NSDictionary *)attributes {
+    NSSize size = [text sizeWithAttributes:attributes];
+    [text drawAtPoint:NSMakePoint(NSMidX(rect) - size.width / 2, NSMidY(rect) - size.height / 2)
+        withAttributes:attributes];
+}
+
+@end
+
 typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nullable error);
 
 @interface CodexQuotaService : NSObject
@@ -370,6 +544,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 @property(nonatomic, strong, nullable) NSURL *historyFileURL;
 @property(nonatomic, copy, nullable) NSString *lastHistorySignature;
 @property(nonatomic) NSInteger historyRecordCount;
+@property(nonatomic, strong) NSMutableArray<QuotaHistoryPoint *> *historyPoints;
 @end
 
 @implementation AppDelegate
@@ -386,6 +561,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         _historyDateFormatter.timeZone = NSTimeZone.localTimeZone;
         _historyDateFormatter.formatOptions = NSISO8601DateFormatWithInternetDateTime |
                                               NSISO8601DateFormatWithFractionalSeconds;
+        _historyPoints = [NSMutableArray array];
     }
     return self;
 }
@@ -602,6 +778,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     self.historyFileURL = fileURL;
     self.historyRecordCount = 0;
     self.lastHistorySignature = nil;
+    [self.historyPoints removeAllObjects];
 
     NSArray<NSString *> *lines = [contents componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
     for (NSUInteger index = 1; index < lines.count; index++) {
@@ -609,8 +786,19 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         if (line.length == 0) continue;
         NSArray<NSString *> *columns = [line componentsSeparatedByString:@","];
         if (columns.count != 9) continue;
+        NSString *signature = [[columns subarrayWithRange:NSMakeRange(1, 8)] componentsJoinedByString:@","];
+        if ([signature isEqualToString:self.lastHistorySignature]) continue;
 
-        self.lastHistorySignature = [[columns subarrayWithRange:NSMakeRange(1, 8)] componentsJoinedByString:@","];
+        NSDate *recordedAt = [self.historyDateFormatter dateFromString:columns[0]];
+        if (recordedAt) {
+            QuotaHistoryPoint *point = [QuotaHistoryPoint new];
+            point.recordedAt = recordedAt;
+            if (columns[2].length > 0) point.primaryRemainingPercent = @(columns[2].integerValue);
+            if (columns[6].length > 0) point.secondaryRemainingPercent = @(columns[6].integerValue);
+            [self.historyPoints addObject:point];
+            if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
+        }
+        self.lastHistorySignature = signature;
         self.historyRecordCount += 1;
     }
 }
@@ -635,6 +823,11 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     NSString *signature = [fields componentsJoinedByString:@","];
     if ([signature isEqualToString:self.lastHistorySignature]) return;
 
+    // Another instance may have appended while this process was refreshing.
+    // Reload immediately before a changed write so the same point is not duplicated.
+    [self prepareUsageHistory];
+    if (!self.historyFileURL || [signature isEqualToString:self.lastHistorySignature]) return;
+
     NSString *recordedAt = [self.historyDateFormatter stringFromDate:snapshot.updatedAt];
     NSString *line = [NSString stringWithFormat:@"%@,%@\n", recordedAt, signature];
     NSData *data = [line dataUsingEncoding:NSUTF8StringEncoding];
@@ -649,12 +842,12 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 
     self.lastHistorySignature = signature;
     self.historyRecordCount += 1;
-}
-
-- (void)openUsageHistory {
-    if (self.historyFileURL && ![NSWorkspace.sharedWorkspace openURL:self.historyFileURL]) {
-        NSLog(@"CodexQuotaBar could not open history file: %@", self.historyFileURL.path);
-    }
+    QuotaHistoryPoint *point = [QuotaHistoryPoint new];
+    point.recordedAt = snapshot.updatedAt;
+    if (snapshot.primary) point.primaryRemainingPercent = @(snapshot.primary.remainingPercent);
+    if (snapshot.secondary) point.secondaryRemainingPercent = @(snapshot.secondary.remainingPercent);
+    [self.historyPoints addObject:point];
+    if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
 }
 
 - (void)updateStatusDisplay {
@@ -709,14 +902,9 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 
     if (self.historyFileURL) {
         [menu addItem:NSMenuItem.separatorItem];
-        NSMenuItem *historyItem = [[NSMenuItem alloc]
-            initWithTitle:[NSString stringWithFormat:@"使用趋势：%ld 条记录", (long)self.historyRecordCount]
-                    action:@selector(openUsageHistory)
-             keyEquivalent:@""];
-        historyItem.target = self;
-        historyItem.image = [NSImage imageWithSystemSymbolName:@"chart.xyaxis.line"
-                                      accessibilityDescription:@"使用趋势"];
-        historyItem.toolTip = self.historyFileURL.path;
+        NSMenuItem *historyItem = [[NSMenuItem alloc] initWithTitle:@"" action:nil keyEquivalent:@""];
+        historyItem.view = [[QuotaTrendView alloc] initWithPoints:self.historyPoints
+                                                 totalRecordCount:self.historyRecordCount];
         [menu addItem:historyItem];
     }
 
