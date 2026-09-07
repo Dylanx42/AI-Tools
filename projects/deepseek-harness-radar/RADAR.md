@@ -2,7 +2,7 @@
 
 > **用途**：长期跟踪 DeepSeek Harness 官方与插件生态；本文件只维护“当前状态”，每日历史看 `history/YYYY-MM.md`。  
 > **当前策略**：只观察 / 比较 / 记录，不安装、下载或运行第三方插件。  
-> **最后整理**：2026-09-06  
+> **最后整理**：2026-09-07  
 > **迁移到 AI-Tools**：2026-08-29
 
 ## 状态定义
@@ -45,7 +45,7 @@
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
 | dsh-market | 插件生命周期、诊断与可恢复更新基础设施 | 可日常使用 | 1.38.0 已实现失败更新精确恢复旧版本/commit + 回读验证 | **0.1.3-alpha.1** compatibility matrix；SessionHandle/Session v2、Update API、供应链、恢复覆盖 |
-| Compatibility / Upgrade Skills / upstream-radar | 0.1.3-alpha.1 再次证明兼容不能只看 peer range：Session persistence/lifecycle 已跨代 | 实验性→正在成型 | RC1 已暴露原地升级/混合依赖问题；0.1.3-alpha.1 新增 `SessionHandle`、异步 agentLoop、Session v2 与跨进程锁，形成新的 exact-contract 迁移面 | **RC1→0.1.3-alpha.1** real-host gate；v0/v1→v2 Session migration、clean vs in-place upgrade、依赖树污染、exact API surface、官方 Upgrade Skill |
+| Compatibility / Upgrade Skills / upstream-radar | 0.1.2/0.1.3 继续证明“版本匹配”仍不足以代表可运行：官方/本地插件也可因隐式 metadata 或已退休 Session API 在真实 Host 中硬失败 | 实验性→正在成型 | 2026-09-07 新增两类 real-host 失败：0.1.3-alpha.1 的 local file plugin 可触发 DeepSeek request-extension inventory 失败；RC1 版本匹配的官方 Claude Code hooks bridge 仍调用已移除的 `agent.session.events`，可让全部 tool call 失败 | RC1→0.1.3 real-host gate；local-file/package metadata contract、官方 bundled plugin closure、v0/v1→v2 Session migration、clean vs in-place upgrade、exact API surface |
 | Doctor / Plugin Clinic | 插件故障诊断与恢复 | 可尝鲜 | 已形成启动失败→Session 辅助排障闭环 | 0.1.3-alpha.1、Session v2 自动修复边界、版本冲突、与 Market 整合 |
 | Index / Profile / Distribution | Harness + Plugins 组合成 Agent Profile / Distribution | 早期 | 0.1.2/0.1.3 的 profile/core bundle 与 Session ABI 漂移强化 Profile contract 版本化需求 | 版本固定、预检、升级/回滚、组合兼容 |
 | oh-my-dsh | DSH Distribution 层探索 | 很早期 | 官方 RC1 release 已主动引用社区 dsh-plugin-upgrade-skill | 持续维护、0.1.3 migration 覆盖、真实降复杂度能力 |
@@ -54,7 +54,7 @@
 
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
-| dsh-cc-ecosystem | 复用 Claude Code skills/commands/rules/agents/hooks/MCP | 很早期 | 已进入插件发现生态 | 0.1.3-alpha.1、语义差异、版本漂移 |
+| dsh-cc-ecosystem | Claude Code skills/commands/rules/agents/hooks/MCP 复用方向仍有价值，但官方 bridge 本身已出现与当前 Session contract 脱节的硬兼容故障 | 很早期 / 高兼容风险 | 2026-09-07 `@deepseek-ai/dsh-hooks-claude-code` 在 RC1 上被真实复现仍迭代 `agent.session.events`；即使使用版本匹配的 bundled `0.1.2-rc.1`，挂载后所有 tool call 仍可失败 | 修复是否进入官方包；0.1.3 SessionHandle/Session v2 迁移；hooks/skills/MCP 每条 bridge 的独立 contract 测试 |
 | BrowserSkill | 浏览器登录态 + browser tools / 人工接管 | 可尝鲜 | 已关注 record-safe observation | 权限、安全、0.1.3 Remote/Session lifecycle |
 | SSH / Remote / Ops | DSH 向通用 Agent Runtime 延伸 | 分散 / 可尝鲜 | RC1 Remote API 统一；0.1.3-alpha.1 所有出站请求开始遵循 HTTP(S)/ALL_PROXY/NO_PROXY | 凭证、安全、审计、代理环境语义、最小权限、第三方 Remote extension seam |
 | Memory / Soul | 跨 Workspace Memory / 身份 / 检索注入 | 实验性 | token budget、RRF、压缩、防 context explosion | Session v2 迁移、误记、污染、跨项目泄露、成本 |
