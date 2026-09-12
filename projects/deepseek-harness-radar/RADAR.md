@@ -2,7 +2,7 @@
 
 > **用途**：长期跟踪 DeepSeek Harness 官方与插件生态；本文件只维护“当前状态”，每日历史看 `history/YYYY-MM.md`。  
 > **当前策略**：只观察 / 比较 / 记录，不安装、下载或运行第三方插件。  
-> **最后整理**：2026-09-11  
+> **最后整理**：2026-09-12  
 > **迁移到 AI-Tools**：2026-08-29
 
 ## 状态定义
@@ -35,10 +35,10 @@
 
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
-| 官方 DSH | **最新稳定候选基线已推进到 `0.1.5-rc.2`；rc.2 仅做反馈与文件卡片等 UI 优化，核心 Runtime/Plugin contract 仍以 rc.1 代际为主。`0.1.2-rc.1` 保留为旧 RC 对照线。** | **RC** | 2026-09-10 发布 `0.1.5-rc.2`；release notes 未新增 Harness/Agent/Session 机制，只做体验优化；当前关注点转向 0.1.5 RC 的真实迁移与插件 ABI 收口 | V0/V2→V3 真实历史迁移；旧 preset schema；Host↔Client RPC；assistant streaming；Session 性能与完整性；0.1.5 stable |
-| Session V3 / migration | V3 已进入 RC，但真实历史 corpus 已连续暴露多类 fail-closed 拒绝：旧 `subagent/descriptor version=2` 与未分类 message source 都可能让“列表可见”的旧 Session 无法打开 | RC / 有迁移风险 | 除 descriptor v2 外，rc.1 又出现 `cannot safely transform unclassified message source`；说明风险已从单一事件 shape 扩大到历史来源分类覆盖率 | rc.2 exact-tag 是否改善 migration；V0/V2 多来源 corpus；迁移后 compaction/cold reopen；不可降级边界 |
+| 官方 DSH | **最新稳定候选基线仍为 `0.1.5-rc.2`；rc.2 本身仅做 UI 优化，但现役 Session writer / V3 migration 仍有真实 correctness 风险。`0.1.2-rc.1` 保留为旧 RC 对照线。** | **RC** | 2026-09-12 新证据确认 `0.1.5-rc.2` 在“failed assistant attempt + next-turn steering splice”路径仍可写出缺失 `turn/end` 的 durable Session 形态，后续严格读取可失败 | writer-side turn closure；V2→V3 repair；旧 preset schema；Host↔Client RPC；assistant streaming；0.1.5 stable |
+| Session V3 / migration | V3 已进入 RC，但风险已从“历史 corpus 迁移不全”扩大到**当前 writer correctness**：旧 descriptor / unclassified source 会 fail-closed，rc.2 特定 steering 路径还可新写出缺 `turn/end` 的 durable hole | RC / 高迁移与完整性风险 | `0.1.5-rc.2` 实证：failed `assistant/attempt` 后 `agent/inbox/spliced target=next-turn` 可直接进入下一 `turn/start` 而不写前一 `turn/end`；同类 stored-v2 artifact 在 V3 migration 会关系校验失败 | 官方 writer fix；v2→v3 是否做 repair-not-skip；多来源 corpus；迁移后 compaction/cold reopen；不可降级边界 |
 | 官方 DeepSeek Provider | Provider/模型探测继续成熟；此前 `llm-pi-ai` 无效配置导致整个模型设置入口消失的问题已在 0.1.5 RC release notes 明确修复 | RC | `0.1.5-rc.1` 新增 DeepSeek-V41-Flash 默认模型、任意历史 system prompt update；修复失效 pi-ai 配置吞掉模型设置入口，并加强 Base URL 校验 | 自定义 Provider settings 的真实 RC 回归；Gateway dialect、模型 capability negotiation、默认模型切换影响 |
-| Codex / ChatGPT Provider | DSH 使用 Codex / ChatGPT 模型通道 | 早期实验 | 0.1.5 可选 Subagent runtime 升级 Codex 0.153.4 / Claude Code 2.1.263 | RC 兼容、认证稳定性、模型目录、默认模型语义 |
+| Codex / ChatGPT Provider | 社区 Codex provider 已出现 `0.1.5-rc.2` exact-pairing 与 doctor / isolated-install 验证，方向从概念实验进入可验证 Community Alpha；仍依赖 ChatGPT OAuth 与上游模型权限 | Community Alpha / 可尝鲜但需版本匹配 | `dsh-codex-connect 0.1.0-alpha.4.35` 明确列出 `0.1.2-rc.1 / 0.1.5-alpha.1 / rc.1 / rc.2` verified pairing，并强调 doctor 不能替代真实请求验收 | real-account acceptance、Session recovery/compaction、认证稳定性、模型目录、RC 后续版本漂移 |
 | 多模型 Router | 按任务复杂度切模型 / Provider | 早期实验 | 0.1.5 RC 支持模型显式声明 dynamic system prompt / KV-cache 能力 | fallback、成本/质量数据、能力探测能否进入自动路由 |
 
 ## 👀 P1｜插件基础设施 / Security
@@ -46,7 +46,7 @@
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
 | dsh-market | 插件生命周期、诊断与可恢复更新基础设施 | 可日常使用 | 1.38.0 已实现失败更新精确恢复旧版本/commit + 回读验证 | `0.1.5-rc.2` compatibility matrix；Session V3、Agent/Inbox、Panel/RPC API、供应链、恢复覆盖 |
-| Compatibility / Upgrade Skills / upstream-radar | “版本匹配”不足；0.1.5 RC 后兼容 gate 已扩大为 install/platform → Profile/Preset migration → Host/Client RPC → assistant stream/tool/MCP → Session migration/cold recovery | 实验性→正在成型 | rc.1/rc.2 代际出现官方 persona `text→prefix` 旧 preset 无迁移、`connection.rpc.handle()` 无法注册插件通道、第三方 runtime 丢失 assistant stream 等真实反例 | rc.2 exact version card；preset schema migration；Host RPC POST round-trip；assistant text/thinking/tool assertion；V3 corpus migration；clean vs in-place upgrade |
+| Compatibility / Upgrade Skills / upstream-radar | “版本匹配”不足；0.1.5 RC 后兼容 gate 已扩大为 install/platform → Profile/Preset migration → Host/Client RPC → assistant stream/tool/MCP → Session migration/cold recovery/writer integrity | 实验性→正在成型 | rc.2 又新增现役 writer 可制造 durable `turn/end` hole 的真实证据，说明只测旧日志迁移仍不够 | rc.2 exact version card；writer integrity；preset schema migration；Host RPC POST；assistant text/thinking/tool assertion；V3 corpus migration；clean vs in-place upgrade |
 | Plugin Web/RPC extension seam | 0.1.5 RC 出现公开 `connection.rpc.handle()` 系统性失败：第三方 Web/RPC channel 无法注册，POST 落到 SPA fallback 405；agent-side tools 可仍正常，容易形成“半兼容”假象 | RC Plugin ABI 回归 | 公开报告已涉及 dsh-mnemon、dsh-vision-router；rc.2 release notes 未声明修复 | rc.2 exact-tag real-host；官方 service injection 语义；authenticated RPC round-trip；Panel/Sidebar 扩展面是否收敛 |
 | Doctor / Plugin Clinic | 插件故障诊断与恢复 | 可尝鲜 | 已形成启动失败→Session 辅助排障闭环 | RC V3/旧 preset/RPC 自动诊断边界、版本冲突、与 Market 整合 |
 | Index / Profile / Distribution | Harness + Plugins 组合成 Agent Profile / Distribution | 早期；0.1.5 RC 已证明 Profile 不仅要固定包版本，还必须迁移持久 preset/schema | 0.1.5 persona `text→prefix` 未迁移旧自定义 preset，可让所有新 Session 创建失败且重装后仍保留故障状态 | 版本固定、preset schema 预检/迁移、平台预检、V3 migration、升级/回滚、组合兼容 |
@@ -61,7 +61,7 @@
 | dsh-cc-ecosystem | Claude Code skills/commands/rules/agents/hooks/MCP 复用方向仍有价值，但官方 bridge 曾与 Session contract 脱节 | 很早期 / 高兼容风险 | 0.1.5 RC 内置 Claude Code runtime 更新，同时 Session V3 / Agent API 固化 | hooks bridge 是否修复旧 `agent.session.events`；RC V3/Agent API；skills/MCP 独立 contract test |
 | BrowserSkill | 浏览器登录态 + browser tools / 人工接管 | 可尝鲜 | 0.1.5 RC 全局 proxy 与 web-fetch 安全边界成为新风险面 | 权限、安全、SSRF/内网访问、record-safe observation、Session lifecycle |
 | SSH / Remote / Ops | DSH 向通用 Agent Runtime 延伸 | 分散 / 可尝鲜 | 0.1.5 RC 将 proxy、Session lock、Agent cold delivery 合并进候选版 | 凭证、安全、审计、代理语义、最小权限、第三方 Remote extension seam |
-| Memory / Soul | 跨 Workspace Memory / 身份 / 检索注入 | 实验性 | Session V3 把 system prompt 纳入 message history，迁移与 replacement endpoint 直接影响 durable reader | V3 迁移、误记、污染、跨项目泄露、成本 |
+| Memory / Soul | 跨 Workspace Memory / 身份 / 检索注入仍有价值，但 V3 严格迁移已证明第三方写入事件的 source metadata 会反过来影响整个历史会话可加载性 | 实验性 / 需严格 durable-event contract | `dsh-evolve v0.5.2` 修复其 notice 注入缺 `source.summary`：旧 Harness 未严格校验，但 `0.1.5-rc.2` v0→v1 migration 会拒绝含该形态的整段历史 | V3 event schema；注入 metadata contract；误记/污染；跨项目泄露；迁移前审计与修复 |
 
 ## 👀 P1｜Web / TUI / Desktop
 
@@ -109,8 +109,8 @@
 
 1. **动态能力暴露**：Anchoring、Tool Schema、MCP Lazy、Context/Persona Router、dynamic system prompt / KV-cache-preserving capability。
 2. **多 Agent 治理**：Agent Teams、Subagent durable relation、Agent ownership / Inbox、foreground/background/continuable 互操作、nested waiting/continuation、Steer 抢占、usage/成本可观察性。
-3. **RC 兼容基线**：当前主基线 **0.1.5-rc.2**；重点验证 Profile/Preset 持久 schema、Host/Client RPC、assistant stream/tool、Session V3 历史迁移、Agent/Inbox/Panel API、clean install + 原地升级。
-4. **Runtime / Security**：Session migration/lock/compaction、MCP fault isolation、proxy/web-fetch SSRF、storage migration path safety。
+3. **RC 兼容基线**：当前主基线 **0.1.5-rc.2**；重点验证 Profile/Preset 持久 schema、Host/Client RPC、assistant stream/tool、Session V3 历史迁移与 writer integrity、Agent/Inbox/Panel API、clean install + 原地升级。
+4. **Runtime / Security**：Session migration/lock/compaction/writer correctness、MCP fault isolation、proxy/web-fetch SSRF、storage migration path safety。
 5. **插件生命周期**：Market、Doctor、upgrade skill、rollback、diagnostics、供应链与 Profile/Distribution。
 6. **前端 Runtime 平台化**：官方 Sidebar 与 TUI/Web/Desktop 的第三方 Runtime / Remote / Session 生命周期逐渐重叠。
 
@@ -121,10 +121,11 @@
 3. dsh-mcp-lazy + MCP Runtime fault isolation
 4. 官方 Agent Teams vs dsh-agent-teams / Agent ownership / Inbox / nested continuation / steer
 5. dsh-context V0/V2/V3 compatibility
-6. **0.1.5-rc.2 Profile/Preset migration / Host RPC / assistant stream / Session V3 historical migration**
+6. **0.1.5-rc.2 Profile/Preset migration / Host RPC / assistant stream / Session V3 migration + writer integrity**
 7. dsh-market + Doctor / Compatibility / dsh-plugin-upgrade
 8. Web fetch / Proxy / Storage security boundary
-9. dsh-TUI / better-sidebar / Web UI / Desktop Runtime 与官方 Sidebar 收敛
+9. Codex / ChatGPT Provider exact-pairing 与真实请求恢复
+10. dsh-TUI / better-sidebar / Web UI / Desktop Runtime 与官方 Sidebar 收敛
 
 ## 维护规则
 
