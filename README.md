@@ -1,78 +1,44 @@
 # AI Tools
 
-个人 AI 小工具、自动化与长期观察项目集合。
+这是我自己的小工具仓库。每个工具单独放在 `projects/` 下面，互不影响。
 
-这个仓库采用 **一个项目一个自包含目录** 的方式维护。以后新增工具时，统一放到 `projects/<project-slug>/`，不要再把项目源码、构建脚本或项目文档散落在仓库根目录。
+想用哪个，点进对应目录看它自己的 README 即可。GitHub 上的 `main` 是正式版本。
 
-## 当前项目
+## 里面有什么
 
-| 项目 | 类型 | 说明 |
+| 项目 | 类型 | 做什么 |
 | --- | --- | --- |
-| [`codex-quota-bar`](./projects/codex-quota-bar/) | macOS 小工具 | 原生菜单栏 Codex 额度查看器 |
-| [`deepseek-harness-radar`](./projects/deepseek-harness-radar/) | ChatGPT 自动化 / Radar | DSH 官方与插件生态的每日观察、当前判断与历史 Delta |
-| [`RackTool`](./projects/racktool/) | 跨平台工具（V0.5 automated PASS） | Excel 机柜管理工具；RackCore + GuiSession/headless 已通过，Excel/WPS 与 macOS/Windows GUI 实机验证待完成 |
-| [`wf610-ble`](./projects/wf610-ble/) | macOS 小工具 | WF610A BLE 菜单栏桥接，把 GATT 转成给 SecureCRT 用的持久虚拟串口 |
+| [codex-quota-bar](./projects/codex-quota-bar/) | macOS 菜单栏 | 看 Codex 额度还剩多少 |
+| [deepseek-harness-radar](./projects/deepseek-harness-radar/) | 观察笔记 | 跟踪 DeepSeek Harness 官方和插件生态 |
+| [racktool](./projects/racktool/) | Excel 工具 | 机柜表读取、核对和本地驾驶舱 |
+| [wf610-ble](./projects/wf610-ble/) | macOS 菜单栏 | 把 WF610A 蓝牙转成 SecureCRT 用的串口 |
 
-## 仓库结构
+## 仓库怎么摆
 
 ```text
 .
-├── AGENTS.md
-├── README.md
+├── README.md              # 你正在看的这一页
+├── AGENTS.md              # 给 Codex / 代码助手看的仓库规则
 ├── .gitignore
-├── .github/
-│   └── workflows/
-│       └── codex-quota-bar.yml
+├── .github/workflows/     # 只在对应项目改动时跑的检查
 └── projects/
     ├── codex-quota-bar/
-    │   ├── README.md
-    │   ├── Sources/
-    │   ├── Info.plist
-    │   ├── build.sh
-    │   ├── CHANGELOG.md
-    │   ├── PRIVACY.md
-    │   └── SECURITY.md
     ├── deepseek-harness-radar/
-    │   ├── README.md
-    │   ├── RADAR.md
-    │   └── history/
-    └── racktool/
-        ├── AGENTS.md
-        ├── README.md
-        ├── README_PHASE0.md
-        ├── pyproject.toml
-        ├── docs/
-        ├── samples/
-        ├── src/
-        └── tests/
+    ├── racktool/
     └── wf610-ble/
-        ├── README.md
-        ├── Sources/
-        ├── scripts/
-        ├── Info.plist
-        ├── build.sh
-        ├── CHANGELOG.md
-        ├── PRIVACY.md
-        └── SECURITY.md
 ```
 
-## 维护约定
+根目录不放某个工具的源码。新工具一律新建 `projects/<名字>/`，并在这个目录里写 README。
 
-- 每个工具、自动化或长期观察项目都必须拥有独立目录：`projects/<project-slug>/`。
-- 项目自身的源码、脚本、配置、README、CHANGELOG 等都留在项目目录内。
-- 仓库根目录只保留仓库级文件，例如 `README.md`、`AGENTS.md`、`.gitignore` 和 `.github/`。
-- 新项目至少提供一个 `README.md`，说明用途、依赖、运行/构建方式和当前状态；仅文档落库的 Phase 0 项目可暂用 `README_PHASE0.md`，并在首个开发任务中创建正式 `README.md`。
-- 公共 CI 放在 `.github/workflows/`，并使用 `paths` 限制只在对应项目变化时触发。
-- 构建产物、缓存和本地临时文件不要提交。
+## 以后加新工具
 
-## 新增项目
+1. 建目录：`mkdir -p projects/my-new-tool`
+2. 把源码、脚本、说明都放进这个目录
+3. 写一份 `README.md`：做什么、怎么运行/构建、当前状态
+4. 回到这一页，把新项目加进上面的表格
 
-推荐流程：
+`mkdir -p` 的意思是：按路径创建文件夹；中间目录没有就一起建，文件夹已存在也不报错。把 `my-new-tool` 换成实际项目名。
 
-```sh
-mkdir -p projects/my-new-tool
-```
+如果某个工具需要 GitHub 自动检查，再在 `.github/workflows/` 加一个只盯这个目录的工作流。
 
-然后把该项目的全部文件放进这个目录，并补齐 `README.md`。如果需要 GitHub Actions，再在 `.github/workflows/` 新建与项目同名的工作流。
-
-给 Codex 或其他代码 Agent 下任务前，优先让它先阅读根目录 [`AGENTS.md`](./AGENTS.md)。
+给 Codex 下任务前，让它先读 [`AGENTS.md`](./AGENTS.md)。
