@@ -5,6 +5,7 @@ from racktool.gui.presentation import (
     friendly_conflict_text,
     friendly_exception,
     friendly_issue,
+    friendly_status,
 )
 
 
@@ -49,3 +50,10 @@ def test_friendly_conflict_text_joins_title_and_guidance() -> None:
     assert "目标 U 位已经有设备" in text
     assert "空闲" in text
     assert "target-u-occupied" not in text
+
+
+def test_friendly_status_never_exposes_internal_status_codes() -> None:
+    assert friendly_status("active") == "正常"
+    assert friendly_status("missing") == "源表中已不存在"
+    assert friendly_status("unplaced") == "未放置"
+    assert friendly_status("future-internal-code") == "需关注"

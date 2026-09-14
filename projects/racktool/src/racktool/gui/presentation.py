@@ -115,6 +115,12 @@ _ISSUE_COPY: dict[str, tuple[str, str]] = {
     ),
 }
 
+_STATUS_COPY = {
+    "active": "正常",
+    "missing": "源表中已不存在",
+    "unplaced": "未放置",
+}
+
 
 def friendly_issue(code: str, message: str, severity: str) -> dict[str, str]:
     title_guidance = _ISSUE_COPY.get(code)
@@ -146,6 +152,10 @@ def friendly_exception(error: Exception) -> str:
 
 def cell_display_text(value: str) -> str:
     return str(value).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def friendly_status(status: str) -> str:
+    return _STATUS_COPY.get(status, "需关注")
 
 
 def friendly_conflict_text(code: str, message: str, severity: str = "error") -> str:
