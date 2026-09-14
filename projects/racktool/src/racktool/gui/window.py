@@ -956,10 +956,7 @@ class CockpitWindow:
             if query and query not in rack_name.casefold() and rack_id not in matching_racks:
                 continue
             marker = "●" if row["status"] == "active" else "○"
-            text = (
-                f"{marker}  {rack_name}  ·  {row['occupied_u']}/{row['height_u']}U  ·  "
-                f"{row['occupancy_percent']}%"
-            )
+            text = f"{marker}  {rack_name}"
             item = self.QtWidgets.QListWidgetItem(text)
             item.setData(self.QtCore.Qt.ItemDataRole.UserRole, rack_id)
             item.setToolTip(
