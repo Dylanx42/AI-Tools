@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.gui.session import GuiSession
+from racktool.models.domain import Device
 from racktool.persistence import load_project
 
 
@@ -60,6 +62,96 @@ def test_session_preview_rejects_occupied_target(tmp_path: Path) -> None:
 
     assert any(item.code == "target-u-occupied" for item in plan.conflicts)
     assert session.conflict_rows()
+
+
+def test_staging_does_not_write_until_global_apply(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    before = path.read_bytes()
+    device = next(
+        item for item in session.project.devices if item.display_text == "设备 B"
+    )
+    rack_id = session.project.racks[0].rack_id
+
+    plan = session.stage_move(device.device_id, rack_id, 4, 4)
+
+    assert not plan.conflicts
+    assert len(session.pending_moves) == 1
+    assert path.read_bytes() == before
+
+    result = session.apply_pending_moves()
+
+    assert result.status == "applied"
+    assert not session.pending_moves
+    assert path.read_bytes() != before
+    workbook = load_workbook(path)
+    try:
+        assert workbook["机柜"]["B10"].value == "设备 B"
+        assert workbook["机柜"]["B5"].value is None
+    finally:
+        workbook.close()
+
+
+def test_staging_rejects_pending_target_overlap_without_losing_queue(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    rack_id = session.project.racks[0].rack_id
+    device_a = next(
+        item for item in session.project.devices if item.display_text == "设备 A"
+    )
+    device_b = next(
+        item for item in session.project.devices if item.display_text == "设备 B"
+    )
+    session.stage_move(device_a.device_id, rack_id, 11, 11)
+
+    rejected = session.stage_move(device_b.device_id, rack_id, 11, 11)
+
+    assert any(item.code == "plan-target-overlap" for item in rejected.conflicts)
+    assert [item.device_id for item in session.pending_moves] == [device_a.device_id]
+
+
+def test_two_pending_moves_commit_in_one_safe_sync(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    rack_id = session.project.racks[0].rack_id
+    devices = {item.display_text: item for item in session.project.devices}
+    session.stage_move(devices["设备 A"].device_id, rack_id, 11, 11)
+    session.stage_move(devices["设备 B"].device_id, rack_id, 8, 8)
+
+    result = session.apply_pending_moves()
+
+    assert result.status == "applied"
+    assert len(result.plan.actions) == 2
+    assert result.backup_path is not None
+    assert not session.pending_moves
+
+
+def test_device_page_is_searchable_and_capped_at_one_hundred(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        devices=[
+            Device(device_id=f"device-{index}", display_text=f"设备 {index}")
+            for index in range(110)
+        ],
+        placements=[],
+        mappings=[],
+    )
+
+    rows, total = session.device_page(limit=100)
+    matches, match_total = session.device_page("设备 109")
+
+    assert total == 110
+    assert len(rows) == 100
+    assert match_total == 1
+    assert matches[0]["primary_label"] == "设备 109"
 
 
 def test_session_move_can_reopen_export_and_restore_atomically(tmp_path: Path) -> None:
