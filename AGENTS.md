@@ -64,6 +64,17 @@ This repository is a collection of small AI-assisted tools, automations, and lon
   or synthetic fixtures for real Golden evidence.
 - Keep all RackTool-specific files under `projects/racktool/` and do not create a nested Git repository.
 
+
+### `projects/wf610-ble/`
+
+- Native macOS Swift menu-bar utility plus a Python BLE-to-PTY bridge.
+- Keep runtime scripts under `projects/wf610-ble/scripts/` and the menu-bar source in `Sources/`.
+- Do not commit `.venv/`, `dist/`, or a local `/Applications/WF610 BLE.app`.
+- Validate after changes with:
+  - `plutil -lint Info.plist`
+  - `./build.sh`
+  - `codesign --verify --deep --strict --verbose=2 "dist/WF610 BLE.app"`
+
 ## Adding a new project
 
 Create `projects/<project-slug>/README.md` first, then keep all project-specific files beneath that directory. A documentation-only Phase 0 package may temporarily provide `README_PHASE0.md` when its accepted project contract explicitly defers the final README to the first development task. Update the root README project table when the new project becomes part of the maintained collection.
