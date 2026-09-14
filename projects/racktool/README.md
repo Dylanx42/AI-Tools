@@ -5,9 +5,18 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 
 ## 当前状态
 
-**V0.1～V0.5 automated gates PASS**。其中 V0.5 的自动化范围是 RackCore +
-`GuiSession`/headless；V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责稳定身份，V0.4 负责
-安全写回，V0.5 增加不嵌入 Agent 的本地驾驶舱：
+**V0.1～V0.5 automated gates PASS**。V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责
+稳定身份，V0.4 负责安全写回，V0.5 提供不嵌入 Agent 的本地驾驶舱。旧的表格式 GUI 在 macOS
+人工检查中因可用性不达标被拒绝，现已重构为：
+
+- 总览、机柜、设备和异常四个工作页面；
+- 单机柜可视化与友好的设备详情；
+- 搜索和最多 100 行的有界设备列表；
+- 带 RackCore 实时冲突检查的移动抽屉；
+- 不提前修改 XLSX 的待同步队列；
+- 统一从顶部“同步更改”进入 Safe Sync 批量事务。
+
+底层 Reader 当前能够：
 
 - 按原始顺序列出工作表；
 - 提取非空单元格、坐标、数据类型和稳定的常见样式签名；
@@ -22,8 +31,9 @@ Profile 只描述布局规则，不保存设备业务数据。错误、冲突或
 候选结果保留置信度和 evidence，**不等于人工确认的业务真值**。重复标题、错误名称、忽略标签、
 颜色语义和资产表对账仍需单独验证；synthetic fixture 也不构成真实格式兼容性的证据。
 
-当前审计环境未安装 PySide6，Qt widget window 未运行。Microsoft Excel/WPS 实机打开及写回、
-macOS/Windows GUI 人工检查均为 **MANUAL VALIDATION PENDING**，不能由 headless PASS 替代。
+当前完整套件为 120 passed；PySide6 headless 和真实私有工作簿副本的 macOS native launch 已完成。
+新版 macOS GUI 用户验收、Windows GUI 检查，以及 Microsoft Excel/WPS 实机打开和写回仍为
+**MANUAL VALIDATION PENDING**，不能由自动化或启动成功替代。
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
 
 ## 安装与验证
