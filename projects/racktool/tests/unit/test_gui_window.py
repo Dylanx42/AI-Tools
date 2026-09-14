@@ -246,6 +246,7 @@ def test_sidebar_rack_list_can_stretch_and_sort(tmp_path: Path) -> None:
         ]
         assert any("RACK-B" in name for name in names)
         assert sorted_names[0].startswith("●  RACK-A")
+        assert all("..." not in name and "…" not in name for name in sorted_names)
         first_item = cockpit.rack_list.item(0)
         widest_line = max(first_item.text().splitlines(), key=len)
         assert first_item.sizeHint().width() >= (
