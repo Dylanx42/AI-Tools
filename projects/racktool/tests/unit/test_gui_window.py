@@ -209,6 +209,8 @@ def test_issue_entry_opens_grouped_chinese_exceptions(tmp_path: Path) -> None:
         assert "2 处" in visible
         assert cockpit.exception_rescan_button.text() == "修正 Excel 后重新扫描"
         assert "unresolved-u-axis" in cockpit.exception_technical.toPlainText()
+        assert cockpit.overview_issues.minimumHeight() >= 90
+        assert cockpit.overview_issues.sizeHint().height() >= 90
     finally:
         cockpit.widget().close()
 
@@ -232,6 +234,7 @@ def test_sidebar_rack_list_can_stretch_and_sort(tmp_path: Path) -> None:
 
         assert cockpit.sidebar.minimumWidth() < cockpit.sidebar.maximumWidth()
         assert cockpit.nav_splitter.objectName() == "navSplitter"
+        assert cockpit.nav_splitter.handleWidth() >= 6
         assert (
             cockpit.rack_list.horizontalScrollBarPolicy()
             != cockpit.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -242,7 +245,12 @@ def test_sidebar_rack_list_can_stretch_and_sort(tmp_path: Path) -> None:
             "按占用率排序",
         ]
         assert any("RACK-B" in name for name in names)
-        assert sorted_names[0].endswith("RACK-A")
+        assert sorted_names[0].startswith("●  RACK-A")
+        first_item = cockpit.rack_list.item(0)
+        widest_line = max(first_item.text().splitlines(), key=len)
+        assert first_item.sizeHint().width() >= (
+            cockpit.rack_list.fontMetrics().horizontalAdvance(widest_line) + 28
+        )
     finally:
         cockpit.widget().close()
 
@@ -318,5 +326,46 @@ def test_device_filters_and_overview_sheet_view(tmp_path: Path) -> None:
         assert "RACK-A" in scene_text
         assert "交换机" in scene_text
         assert "核心" in scene_text
+    finally:
+        cockpit.widget().close()
+
+
+def test_unexpected_sync_error_is_caught_without_losing_pending_move(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    before = path.read_bytes()
+    session = GuiSession.open_workbook(path)
+    device = next(item for item in session.project.devices if item.display_text == "设备 B")
+    rack_id = session.project.racks[0].rack_id
+    session.stage_move(device.device_id, rack_id, 4, 4)
+    cockpit = CockpitWindow()
+    shown: dict[str, object] = {}
+
+    def fail_sync() -> object:
+        raise OSError("raw internal failure")
+
+    try:
+        cockpit.load_session(session)
+        monkeypatch.setattr(session, "apply_pending_moves", fail_sync)
+        monkeypatch.setattr(
+            cockpit.QtWidgets.QMessageBox,
+            "question",
+            lambda *_args, **_kwargs: cockpit.QtWidgets.QMessageBox.StandardButton.Yes,
+        )
+        monkeypatch.setattr(
+            cockpit,
+            "_show_error",
+            lambda title, error: shown.update(title=title, error=error),
+        )
+
+        cockpit._sync_pending()
+
+        assert shown["title"] == "同步未完成"
+        assert isinstance(shown["error"], OSError)
+        assert len(session.pending_moves) == 1
+        assert path.read_bytes() == before
     finally:
         cockpit.widget().close()

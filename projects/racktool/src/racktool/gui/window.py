@@ -7,6 +7,7 @@ from racktool.gui.presentation import (
     cell_display_text,
     friendly_conflict_text,
     friendly_exception,
+    friendly_status,
 )
 from racktool.gui.session import GuiSession, default_database_path
 
@@ -67,7 +68,9 @@ class CockpitWindow:
         self.nav_splitter.addWidget(self._build_workspace())
         self.nav_splitter.setStretchFactor(0, 0)
         self.nav_splitter.setStretchFactor(1, 1)
+        self.nav_splitter.setHandleWidth(7)
         self.nav_splitter.setSizes([300, 1140])
+        self.nav_splitter.splitterMoved.connect(self._resize_rack_items)
         root_layout.addWidget(self.nav_splitter, 1)
         root_layout.addWidget(self._build_move_drawer())
         self.window.setCentralWidget(root)
@@ -371,6 +374,7 @@ class CockpitWindow:
         QtWidgets = self.QtWidgets
         card = QtWidgets.QPushButton() if clickable else QtWidgets.QFrame()
         card.setObjectName(object_name)
+        card.setFixedHeight(96)
         layout = QtWidgets.QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
         label = QtWidgets.QLabel(title)
@@ -797,6 +801,7 @@ class CockpitWindow:
                                                border-radius: 10px; }
             #issueEntryButton, #overviewIssueEntry { background: #ffffff; border: 1px solid #e1e7ef;
                                                     border-radius: 10px; }
+            #overviewIssueEntry { min-height: 94px; max-height: 94px; }
             #issueEntryButton:hover, #overviewIssueEntry:hover { border: 1px solid #1677ff;
                                                                 background: #f4f8ff; }
             #issueEntryLink { text-align: left; background: #eef5ff; border: 1px solid #cfe0fb;
@@ -865,7 +870,8 @@ class CockpitWindow:
             #previewMessage { color: #667085; font-size: 12px; }
             #infoNote { background: #f0f6ff; color: #365d8d; border-radius: 8px;
                         padding: 11px; font-size: 12px; }
-            QSplitter::handle { background: #edf1f6; width: 1px; }
+            QSplitter::handle { background: #dfe6ef; }
+            QSplitter::handle:hover { background: #98a6b8; }
             QScrollBar:vertical { background: transparent; width: 9px; margin: 2px; }
             QScrollBar::handle:vertical { background: #c5ceda; border-radius: 4px; min-height: 28px; }
             QScrollBar::handle:vertical:hover { background: #98a6b8; }
@@ -921,10 +927,12 @@ class CockpitWindow:
         self.device_metric.value_label.setText(str(len(devices)))
         issue_count = sum(int(row["count"]) for row in issues)
         self.issue_metric.value_label.setText(str(issue_count))
+        self.issue_metric.setAccessibleName(f"待处理：{issue_count}，点击查看异常")
         self.overview_racks.value_label.setText(str(len(racks)))
         self.overview_devices.value_label.setText(str(len(devices)))
         self.overview_occupancy.value_label.setText(f"{percent}%")
         self.overview_issues.value_label.setText(str(issue_count))
+        self.overview_issues.setAccessibleName(f"异常：{issue_count}，点击查看处理方法")
         self.issue_entry_button.setText(
             "查看待处理 / 异常" if issue_count == 0 else f"查看待处理 / 异常（{issue_count}）"
         )
@@ -949,8 +957,7 @@ class CockpitWindow:
                 continue
             marker = "●" if row["status"] == "active" else "○"
             text = (
-                f"{marker}  {rack_name}\n"
-                f"     {row['occupied_u']}/{row['height_u']}U  ·  "
+                f"{marker}  {rack_name}  ·  {row['occupied_u']}/{row['height_u']}U  ·  "
                 f"{row['occupancy_percent']}%"
             )
             item = self.QtWidgets.QListWidgetItem(text)
@@ -959,7 +966,7 @@ class CockpitWindow:
                 f"{rack_name}\n{row['sheet_name'] or '未标注工作表'} · "
                 f"{row['device_count']} 台设备，剩余 {row['available_u']}U"
             )
-            item.setSizeHint(self.QtCore.QSize(self.rack_list.viewport().width(), 48))
+            item.setSizeHint(self._rack_item_size(text))
             self.rack_list.addItem(item)
             if rack_id == self._selected_rack:
                 selected_item = item
@@ -972,6 +979,19 @@ class CockpitWindow:
             self._selected_rack = (
                 str(item.data(self.QtCore.Qt.ItemDataRole.UserRole)) if item else None
             )
+
+    def _rack_item_size(self, text: str) -> Any:
+        lines = text.splitlines() or [""]
+        metrics = self.rack_list.fontMetrics()
+        content_width = max(metrics.horizontalAdvance(line) for line in lines) + 28
+        visible_width = max(self.sidebar.width() - 36, self.sidebar.minimumWidth() - 36, 160)
+        height = max(48, metrics.lineSpacing() * len(lines) + 16)
+        return self.QtCore.QSize(max(content_width, visible_width), height)
+
+    def _resize_rack_items(self, *_args: Any) -> None:
+        for index in range(self.rack_list.count()):
+            item = self.rack_list.item(index)
+            item.setSizeHint(self._rack_item_size(item.text()))
 
     def _refresh_device_table(self) -> None:
         if self.session is None:
@@ -1002,7 +1022,7 @@ class CockpitWindow:
                 str(row["rack_name"] or "未放置"),
                 position,
                 "—" if row["height_u"] is None else f"{row['height_u']}U",
-                "正常" if row["status"] == "active" else str(row["status"]),
+                friendly_status(str(row["status"])),
             ]
             for column, value in enumerate(values):
                 item = self.QtWidgets.QTableWidgetItem(value)
@@ -1235,9 +1255,7 @@ class CockpitWindow:
         self.device_name.setText(
             cell_display_text(str(row["display_text"] or row["primary_label"]))
         )
-        self.device_status.setText(
-            "正常" if row["status"] == "active" else str(row["status"])
-        )
+        self.device_status.setText(friendly_status(str(row["status"])))
         self.device_status.show()
         self.detail_rack.setText(str(row["rack_name"] or "未放置"))
         self.detail_u.setText(self._format_u_range(row["start_u"], row["end_u"]))
@@ -1465,7 +1483,12 @@ class CockpitWindow:
         )
         if answer != self.QtWidgets.QMessageBox.StandardButton.Yes:
             return
-        result = self.session.apply_pending_moves()
+        try:
+            result = self.session.apply_pending_moves()
+        except Exception as error:  # noqa: BLE001
+            self._show_error("同步未完成", error)
+            self._refresh_all()
+            return
         self._refresh_all()
         if result.status == "applied":
             self.QtWidgets.QMessageBox.information(
@@ -1582,7 +1605,6 @@ class CockpitWindow:
             self._show_error("恢复失败", error)
 
     def _show_error(self, title: str, error: Exception) -> None:
-
         box = self.QtWidgets.QMessageBox(self.window)
         box.setIcon(self.QtWidgets.QMessageBox.Icon.Critical)
         box.setWindowTitle(title)
@@ -1611,8 +1633,6 @@ class CockpitWindow:
         low = min(int(start_u), int(end_u))
         high = max(int(start_u), int(end_u))
         return f"U{low}" if low == high else f"U{low}–U{high}"
-
-
     def _open_exceptions(self, *_args: Any) -> None:
         self._set_page(self.PAGE_EXCEPTIONS)
 
