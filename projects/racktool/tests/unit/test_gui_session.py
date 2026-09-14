@@ -9,6 +9,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.gui.session import GuiSession
 from racktool.models.domain import Device
+from racktool.models.project import IdentityConflict
 from racktool.persistence import load_project
 
 
@@ -218,6 +219,128 @@ def test_session_ambiguous_rescan_keeps_memory_and_database_unchanged(
         for item in session.last_rescan_conflicts
     )
     assert load_project(session.database_path).to_dict() == original_project.to_dict()
+
+
+def _make_sorted_layout(path: Path, *, multiline: bool = False) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "机柜"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-B"
+    _fill_descending_axis(sheet, 1, 2, 12)
+    _fill_descending_axis(sheet, 3, 2, 12)
+    sheet["B2"] = "交换机\n核心\n管理口" if multiline else "设备 A"
+    sheet["B5"] = "设备 B"
+    sheet.merge_cells("E1:G1")
+    sheet["E1"] = "RACK-A"
+    _fill_descending_axis(sheet, 5, 2, 12)
+    _fill_descending_axis(sheet, 7, 2, 12)
+    sheet["F2"] = "设备 C"
+    sheet["F3"] = "设备 D"
+    sheet["F4"] = "设备 E"
+    workbook.save(path)
+
+
+def test_session_preserves_multiline_device_text(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path, multiline=True)
+    session = GuiSession.open_workbook(path)
+
+    device = next(row for row in session.device_rows() if "交换机" in str(row["display_text"]))
+    assert device["display_text"] == "交换机\n核心\n管理口"
+    rack_id = str(device["rack_id"])
+    segment = next(
+        item for item in session.occupancy_segments(rack_id) if item["device_id"] == device["device_id"]
+    )
+    assert segment["display_text"] == "交换机\n核心\n管理口"
+
+
+def test_rack_rows_sort_by_source_name_and_occupancy(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path)
+    session = GuiSession.open_workbook(path)
+
+    source_names = [row["rack_name"] for row in session.rack_rows("source")]
+    name_order = [row["rack_name"] for row in session.rack_rows("name")]
+    occupancy = session.rack_rows("occupancy")
+
+    assert source_names[0] == "RACK-B"
+    assert name_order[0] == "RACK-A"
+    assert occupancy[0]["rack_name"] == "RACK-A"
+    assert occupancy[0]["occupancy_percent"] >= occupancy[1]["occupancy_percent"]
+
+
+def test_device_page_filters_and_sorts(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path)
+    session = GuiSession.open_workbook(path)
+    rack_a = next(row for row in session.rack_rows() if row["rack_name"] == "RACK-A")
+
+    rows, total = session.device_page(rack_id=str(rack_a["rack_id"]), sort_by="name")
+    by_name = [row["primary_label"] for row in rows]
+    _, active_total = session.device_page(status_filter="active")
+    _, one_u_total = session.device_page(height_filter="1u")
+
+    assert total == 3
+    assert by_name == sorted(by_name)
+    assert active_total == 5
+    assert one_u_total == 5
+
+
+def test_issue_rows_group_similar_items_in_chinese(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        conflicts=[
+            IdentityConflict(
+                code="unresolved-u-axis",
+                severity="warning",
+                message="U axis at column 9 has no title",
+            ),
+            IdentityConflict(
+                code="unresolved-u-axis",
+                severity="warning",
+                message="U axis at column 12 has no title",
+            ),
+            IdentityConflict(
+                code="target-u-occupied",
+                severity="error",
+                message="Target U is occupied",
+            ),
+        ],
+    )
+
+    rows = session.issue_rows()
+    titles = [row["title"] for row in rows]
+
+    assert any("2 处" in title for title in titles)
+    assert all("unresolved-u-axis" not in row["title"] for row in rows)
+    assert all("Target U" not in row["guidance"] for row in rows)
+    grouped = next(row for row in rows if "2 处" in row["title"])
+    assert "unresolved-u-axis" in grouped["technical_detail"]
+    assert "重新扫描" in grouped["guidance"]
+
+
+def test_overview_sheet_uses_readonly_scan_layout(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path, multiline=True)
+    session = GuiSession.open_workbook(path)
+
+    names = session.overview_sheet_names()
+    sheet = session.overview_sheet(names[0])
+    device_texts = [
+        str(device["display_text"])
+        for rack in sheet["racks"]
+        for device in rack["devices"]
+    ]
+
+    assert names == ["机柜"]
+    assert {rack["rack_name"] for rack in sheet["racks"]} == {"RACK-A", "RACK-B"}
+    assert "交换机\n核心\n管理口" in device_texts
+    assert all("source_bounds" in device for rack in sheet["racks"] for device in rack["devices"])
 
 
 def test_session_database_failure_does_not_adopt_half_written_state(

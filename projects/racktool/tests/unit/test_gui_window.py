@@ -14,6 +14,7 @@ pytest.importorskip("PySide6")
 from racktool.gui.session import GuiSession
 from racktool.gui.window import CockpitWindow, create_app
 from racktool.models.domain import Device
+from racktool.models.project import IdentityConflict
 
 
 def _fill_descending_axis(
@@ -145,3 +146,177 @@ def test_global_sync_is_the_only_device_move_write_control() -> None:
     assert text.count("apply_pending_moves()") == 1
     assert 'setObjectName("globalSyncButton")' in text
     assert "openpyxl" not in text
+
+
+def _make_sorted_layout(path: Path, *, multiline: bool = False) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "机柜"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-B"
+    _fill_descending_axis(sheet, 1, 2, 12)
+    _fill_descending_axis(sheet, 3, 2, 12)
+    sheet["B2"] = "交换机\n核心\n管理口" if multiline else "设备 A"
+    sheet["B5"] = "设备 B"
+    sheet.merge_cells("E1:G1")
+    sheet["E1"] = "RACK-A"
+    _fill_descending_axis(sheet, 5, 2, 12)
+    _fill_descending_axis(sheet, 7, 2, 12)
+    sheet["F2"] = "设备 C"
+    sheet["F3"] = "设备 D"
+    sheet["F4"] = "设备 E"
+    workbook.save(path)
+
+
+def test_issue_entry_opens_grouped_chinese_exceptions(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        conflicts=[
+            IdentityConflict(
+                code="unresolved-u-axis",
+                severity="warning",
+                message="U axis at column 9 has no title",
+            ),
+            IdentityConflict(
+                code="unresolved-u-axis",
+                severity="warning",
+                message="U axis at column 12 has no title",
+            ),
+        ],
+    )
+    cockpit = CockpitWindow()
+    try:
+        cockpit.load_session(session)
+        cockpit.issue_entry_button.click()
+
+        assert cockpit.content_stack.currentIndex() == CockpitWindow.PAGE_EXCEPTIONS
+        headers = [
+            cockpit.exception_table.horizontalHeaderItem(index).text()
+            for index in range(cockpit.exception_table.columnCount())
+        ]
+        assert headers == ["级别", "问题", "如何处理"]
+        visible = " ".join(
+            cockpit.exception_table.item(0, column).text()
+            for column in range(cockpit.exception_table.columnCount())
+        )
+        assert "unresolved-u-axis" not in visible
+        assert "U axis" not in visible
+        assert "重新扫描" in visible
+        assert "2 处" in visible
+        assert cockpit.exception_rescan_button.text() == "修正 Excel 后重新扫描"
+        assert "unresolved-u-axis" in cockpit.exception_technical.toPlainText()
+    finally:
+        cockpit.widget().close()
+
+
+def test_sidebar_rack_list_can_stretch_and_sort(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path)
+    session = GuiSession.open_workbook(path)
+    cockpit = CockpitWindow()
+    try:
+        cockpit.load_session(session)
+        names = [
+            cockpit.rack_list.item(index).text().splitlines()[0]
+            for index in range(cockpit.rack_list.count())
+        ]
+        cockpit.rack_sort_box.setCurrentIndex(1)
+        sorted_names = [
+            cockpit.rack_list.item(index).text().splitlines()[0]
+            for index in range(cockpit.rack_list.count())
+        ]
+
+        assert cockpit.sidebar.minimumWidth() < cockpit.sidebar.maximumWidth()
+        assert cockpit.nav_splitter.objectName() == "navSplitter"
+        assert (
+            cockpit.rack_list.horizontalScrollBarPolicy()
+            != cockpit.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        assert [cockpit.rack_sort_box.itemText(index) for index in range(3)] == [
+            "按源表位置排序",
+            "按名称排序",
+            "按占用率排序",
+        ]
+        assert any("RACK-B" in name for name in names)
+        assert sorted_names[0].endswith("RACK-A")
+    finally:
+        cockpit.widget().close()
+
+
+def test_multiline_text_reaches_preview_table_detail_and_pending(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path, multiline=True)
+    before = path.read_bytes()
+    session = GuiSession.open_workbook(path)
+    device = next(
+        row for row in session.device_rows() if "交换机" in str(row["display_text"])
+    )
+    cockpit = CockpitWindow()
+    try:
+        cockpit.load_session(session)
+        cockpit._selected_device = str(device["device_id"])
+        cockpit._selected_rack = str(device["rack_id"])
+        cockpit._render_selected_rack()
+        cockpit._refresh_device_detail()
+        cockpit._refresh_device_table()
+
+        matching = [
+            cockpit.device_table.item(row, 0).text()
+            for row in range(cockpit.device_table.rowCount())
+            if cockpit.device_table.item(row, 0) is not None
+            and "交换机" in cockpit.device_table.item(row, 0).text()
+        ]
+        scene_text = " ".join(
+            item.toPlainText()
+            for item in cockpit.rack_scene.items()
+            if hasattr(item, "toPlainText")
+        )
+        assert "交换机\n核心\n管理口" in matching[0]
+        assert "交换机\n核心\n管理口" in cockpit.device_name.text()
+        assert "交换机\n核心\n管理口" in scene_text
+
+        cockpit._open_move_drawer()
+        cockpit.target_start_u.setValue(4)
+        cockpit._update_move_preview()
+        cockpit._stage_drawer_move()
+        pending_text = cockpit.pending_table.item(0, 0).text()
+        assert "交换机\n核心\n管理口" in pending_text
+        assert path.read_bytes() == before
+    finally:
+        cockpit.widget().close()
+
+
+def test_device_filters_and_overview_sheet_view(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path, multiline=True)
+    session = GuiSession.open_workbook(path)
+    cockpit = CockpitWindow()
+    try:
+        cockpit.load_session(session)
+        rack_a = next(row for row in session.rack_rows() if row["rack_name"] == "RACK-A")
+        rack_index = cockpit.device_rack_filter.findData(str(rack_a["rack_id"]))
+        cockpit.device_rack_filter.setCurrentIndex(rack_index)
+
+        labels = [
+            cockpit.device_table.item(row, 0).text()
+            for row in range(cockpit.device_table.rowCount())
+        ]
+        assert cockpit.device_table.rowCount() == 3
+        assert all("设备 A" not in label and "交换机" not in label for label in labels)
+        assert cockpit.overview_sheet_box.currentText() == "机柜"
+        assert cockpit.overview_view.objectName() == "overviewSheetView"
+        assert len(cockpit.overview_scene.items()) > 2
+        scene_text = " ".join(
+            item.toPlainText()
+            for item in cockpit.overview_scene.items()
+            if hasattr(item, "toPlainText")
+        )
+        assert "RACK-A" in scene_text
+        assert "交换机" in scene_text
+        assert "核心" in scene_text
+    finally:
+        cockpit.widget().close()
