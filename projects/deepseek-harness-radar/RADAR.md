@@ -2,7 +2,7 @@
 
 > **用途**：长期跟踪 DeepSeek Harness 官方与插件生态；本文件只维护“当前状态”，每日历史看 `history/YYYY-MM.md`。  
 > **当前策略**：只观察 / 比较 / 记录，不安装、下载或运行第三方插件。  
-> **最后整理**：2026-09-12  
+> **最后整理**：2026-09-14  
 > **迁移到 AI-Tools**：2026-08-29
 
 ## 状态定义
@@ -16,7 +16,7 @@
 
 | 项目 / 方向 | 当前判断 | 成熟度 | 最近实质变化 | 下一观察点 |
 |---|---|---|---|---|
-| Anchored Standard / 动态 Tool Schema | 仍是最重要的 DSH 推理优化研究线之一；通过控制不同阶段可见 Tool Schema 影响 reasoning trajectory | 实验性 | Prefab seeding / tool unlock 已补；Minimal persona 已确认 identity drift 边界 | 真实任务 trajectory A/B、跨模型复现、identity anchor |
+| Anchored Standard / 动态 Tool Schema | 仍是最重要的 DSH 推理优化研究线之一；通过控制不同阶段可见 Tool Schema 影响 reasoning trajectory | 实验性 | Prefab seeding / tool unlock 已补；Minimal persona 已确认 identity drift 边界 | 真实任务 trajectory A/B、跨模型复现、identity anchor；sandbox escalation 字段能否按 Session capability 动态投影 |
 | dsh-routing-suite | 任务分类 → persona/reasoning 路由 → 近距离 Context 注入；官方已提供“动态修改 system prompt 且不破坏 KV Cache”的模型能力面 | 实验性 | `0.1.5-rc.1` 正式收录 opt-in dynamic system-prompt update without KV-cache invalidation | 支持模型范围；cache hit / trajectory / persona A/B；routing-suite 是否复用官方 capability |
 | dsh-mcp-lazy | MCP 工具按需暴露，降低常驻 Schema | 可尝鲜 | `0.1.5-rc.1` 官方拒绝 MCP 重复分页 cursor，避免启动/同步无限等待并保留上一组可用工具 | RC 系列真实兼容、激活准确率、Schema 成本；是否还需要额外 deadline/page-cap |
 | dsh-context | 多 Agent Context / 拓扑可观察层；已主动跨三代 Session log 做 shape-driven 兼容 | 可日常尝鲜 | `dsh-context@0.46.1` 已验证 V0/V2/V3，并对 0.1.5 alpha 做 disposable-profile install/uninstall | `0.1.5-rc.2` V3 实测；system/message、replacement seq、PTC rename 长期稳定性 |
@@ -84,6 +84,7 @@
 | dsh-auto-maintenance | 插件自检、快照、失败回滚、rescue | 权限重；RC Session V3 / 不可降级读取是重要真实检验面 |
 | dshvm | DSH 多版本切换与按版本隔离 `$DSH_HOME`，直接对应 RC 并行与升级污染风险 | 很新；RC/V3 下重点验证凭据/Session copy、跨平台与回滚可靠性 |
 | dsh-plugin-upgrade | 锁定 0.1.3-alpha.1→0.1.5 迁移走廊，提供只读 seam scanner + on-demand upgrade skill；报告使用 40 个真实插件仓做 seam 语料 | 新项目；需把终点更新到 `0.1.5-rc.2` 并证明 preset/RPC/stream/V3 real-host gate 持续有效 |
+| dsh-sandbox-escalation-fix | 针对第三方模型在 Full Access / delegated Subagent 中重复填写 `sandbox_permissions` / `justification` 后触发 same-mode escalation 失败；多份官方讨论独立复现，项目已给出 `0.1.5-rc.2` exact compatibility、15 个相关包逐文件核对与 40 项测试 | 仍是社区 compatibility layer；重点看官方是否做 session-aware Tool Schema projection / same-mode normalization，以及跨模型 A/B、real-host 长会话与 Subagent retry/token 数据 |
 
 ## 官方 DSH 近期里程碑
 
@@ -107,10 +108,10 @@
 
 ## 当前长期主线
 
-1. **动态能力暴露**：Anchoring、Tool Schema、MCP Lazy、Context/Persona Router、dynamic system prompt / KV-cache-preserving capability。
+1. **动态能力暴露**：Anchoring、Tool Schema、MCP Lazy、Context/Persona Router、dynamic system prompt / KV-cache-preserving capability；新增关注 sandbox escalation 字段是否按 Session capability 动态投影。
 2. **多 Agent 治理**：Agent Teams、Subagent durable relation、Agent ownership / Inbox、foreground/background/continuable 互操作、nested waiting/continuation、Steer 抢占、usage/成本可观察性。
 3. **RC 兼容基线**：当前主基线 **0.1.5-rc.2**；重点验证 Profile/Preset 持久 schema、Host/Client RPC、assistant stream/tool、Session V3 历史迁移与 writer integrity、Agent/Inbox/Panel API、clean install + 原地升级。
-4. **Runtime / Security**：Session migration/lock/compaction/writer correctness、MCP fault isolation、proxy/web-fetch SSRF、storage migration path safety。
+4. **Runtime / Security**：Session migration/lock/compaction/writer correctness、MCP fault isolation、sandbox escalation/schema projection、proxy/web-fetch SSRF、storage migration path safety。
 5. **插件生命周期**：Market、Doctor、upgrade skill、rollback、diagnostics、供应链与 Profile/Distribution。
 6. **前端 Runtime 平台化**：官方 Sidebar 与 TUI/Web/Desktop 的第三方 Runtime / Remote / Session 生命周期逐渐重叠。
 
@@ -125,7 +126,8 @@
 7. dsh-market + Doctor / Compatibility / dsh-plugin-upgrade
 8. Web fetch / Proxy / Storage security boundary
 9. Codex / ChatGPT Provider exact-pairing 与真实请求恢复
-10. dsh-TUI / better-sidebar / Web UI / Desktop Runtime 与官方 Sidebar 收敛
+10. dsh-sandbox-escalation-fix / session-aware sandbox Tool Schema
+11. dsh-TUI / better-sidebar / Web UI / Desktop Runtime 与官方 Sidebar 收敛
 
 ## 维护规则
 
