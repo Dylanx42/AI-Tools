@@ -3,6 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from racktool.gui.presentation import (
+    cell_display_text,
+    friendly_conflict_text,
+    friendly_exception,
+)
 from racktool.gui.session import GuiSession, default_database_path
 
 
@@ -55,8 +60,15 @@ class CockpitWindow:
         root_layout = QtWidgets.QHBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
-        root_layout.addWidget(self._build_sidebar())
-        root_layout.addWidget(self._build_workspace(), 1)
+        self.nav_splitter = QtWidgets.QSplitter()
+        self.nav_splitter.setObjectName("navSplitter")
+        self.nav_splitter.setChildrenCollapsible(False)
+        self.nav_splitter.addWidget(self._build_sidebar())
+        self.nav_splitter.addWidget(self._build_workspace())
+        self.nav_splitter.setStretchFactor(0, 0)
+        self.nav_splitter.setStretchFactor(1, 1)
+        self.nav_splitter.setSizes([300, 1140])
+        root_layout.addWidget(self.nav_splitter, 1)
         root_layout.addWidget(self._build_move_drawer())
         self.window.setCentralWidget(root)
 
@@ -85,7 +97,8 @@ class CockpitWindow:
         QtWidgets = self.QtWidgets
         sidebar = QtWidgets.QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(258)
+        sidebar.setMinimumWidth(220)
+        sidebar.setMaximumWidth(640)
         layout = QtWidgets.QVBoxLayout(sidebar)
         layout.setContentsMargins(20, 22, 16, 16)
         layout.setSpacing(8)
@@ -123,29 +136,58 @@ class CockpitWindow:
         metrics.setSpacing(7)
         self.rack_metric = self._metric_card("0", "机柜")
         self.device_metric = self._metric_card("0", "设备")
-        self.issue_metric = self._metric_card("0", "待处理")
+        self.issue_metric = self._metric_card(
+            "0",
+            "待处理",
+            object_name="issueEntryButton",
+            clickable=True,
+        )
         metrics.addWidget(self.rack_metric)
         metrics.addWidget(self.device_metric)
         metrics.addWidget(self.issue_metric)
         layout.addLayout(metrics)
 
+        self.issue_entry_button = QtWidgets.QPushButton("查看待处理 / 异常")
+        self.issue_entry_button.setObjectName("issueEntryLink")
+        self.issue_entry_button.setCursor(self.QtCore.Qt.CursorShape.PointingHandCursor)
+        self.issue_entry_button.clicked.connect(self._open_exceptions)
+        layout.addWidget(self.issue_entry_button)
+
         rack_heading = QtWidgets.QLabel("机柜列表")
         rack_heading.setObjectName("sectionEyebrow")
         layout.addWidget(rack_heading)
+        self.rack_sort_box = QtWidgets.QComboBox()
+        self.rack_sort_box.setObjectName("rackSortBox")
+        self.rack_sort_box.addItem("按源表位置排序", "source")
+        self.rack_sort_box.addItem("按名称排序", "name")
+        self.rack_sort_box.addItem("按占用率排序", "occupancy")
+        self.rack_sort_box.currentIndexChanged.connect(self._refresh_rack_list)
+        layout.addWidget(self.rack_sort_box)
         self.rack_list = QtWidgets.QListWidget()
         self.rack_list.setObjectName("rackList")
         self.rack_list.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.rack_list.setWordWrap(True)
+        self.rack_list.setTextElideMode(self.QtCore.Qt.TextElideMode.ElideNone)
         self.rack_list.setHorizontalScrollBarPolicy(
-            self.QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+            self.QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
         )
         self.rack_list.currentItemChanged.connect(self._on_rack_item_changed)
         layout.addWidget(self.rack_list, 1)
+
+        self.sidebar = sidebar
         return sidebar
 
-    def _metric_card(self, value: str, caption: str) -> Any:
+    def _metric_card(
+        self,
+        value: str,
+        caption: str,
+        *,
+        object_name: str = "metricCard",
+        clickable: bool = False,
+    ) -> Any:
         QtWidgets = self.QtWidgets
-        card = QtWidgets.QFrame()
-        card.setObjectName("metricCard")
+        card = QtWidgets.QPushButton() if clickable else QtWidgets.QFrame()
+        card.setObjectName(object_name)
         card.setFixedHeight(72)
         layout = QtWidgets.QVBoxLayout(card)
         layout.setContentsMargins(4, 8, 4, 7)
@@ -159,6 +201,12 @@ class CockpitWindow:
         layout.addWidget(number)
         layout.addWidget(label)
         card.value_label = number
+        if clickable:
+            card.setCursor(self.QtCore.Qt.CursorShape.PointingHandCursor)
+            card.setFocusPolicy(self.QtCore.Qt.FocusPolicy.StrongFocus)
+            card.clicked.connect(self._open_exceptions)
+            number.setAttribute(self.QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            label.setAttribute(self.QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         return card
 
     def _build_workspace(self) -> Any:
@@ -258,7 +306,13 @@ class CockpitWindow:
         self.overview_racks = self._overview_card("机柜", "0", "已识别")
         self.overview_devices = self._overview_card("设备", "0", "已纳入项目")
         self.overview_occupancy = self._overview_card("总体占用", "0%", "按 U 位计算")
-        self.overview_issues = self._overview_card("异常", "0", "需检查")
+        self.overview_issues = self._overview_card(
+            "异常",
+            "0",
+            "需检查",
+            object_name="overviewIssueEntry",
+            clickable=True,
+        )
         for card in (
             self.overview_racks,
             self.overview_devices,
@@ -268,24 +322,55 @@ class CockpitWindow:
             cards.addWidget(card)
         layout.addLayout(cards)
 
-        activity = QtWidgets.QFrame()
-        activity.setObjectName("panel")
-        activity_layout = QtWidgets.QVBoxLayout(activity)
-        activity_layout.setContentsMargins(18, 18, 18, 18)
-        heading = QtWidgets.QLabel("当前状态")
-        heading.setObjectName("panelTitle")
+        sheet_bar = QtWidgets.QHBoxLayout()
+        sheet_label = QtWidgets.QLabel("工作表视图")
+        sheet_label.setObjectName("panelTitle")
+        self.overview_sheet_box = QtWidgets.QComboBox()
+        self.overview_sheet_box.setObjectName("overviewSheetBox")
+        self.overview_sheet_box.setMinimumWidth(180)
+        self.overview_sheet_box.currentIndexChanged.connect(self._render_overview_sheet)
+        sheet_hint = QtWidgets.QLabel("按源 Excel 的行列位置查看整体排布，可点击机柜进入详情。")
+        sheet_hint.setObjectName("pageSubtitle")
+        sheet_bar.addWidget(sheet_label)
+        sheet_bar.addWidget(self.overview_sheet_box)
+        sheet_bar.addWidget(sheet_hint, 1)
+        layout.addLayout(sheet_bar)
+
+        sheet_frame = QtWidgets.QFrame()
+        sheet_frame.setObjectName("rackCanvasFrame")
+        sheet_layout = QtWidgets.QVBoxLayout(sheet_frame)
+        sheet_layout.setContentsMargins(8, 8, 8, 8)
+        self.overview_scene = QtWidgets.QGraphicsScene()
+        self.overview_view = QtWidgets.QGraphicsView(self.overview_scene)
+        self.overview_view.setObjectName("overviewSheetView")
+        self.overview_view.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        self.overview_view.setRenderHint(self.QtGui.QPainter.RenderHint.Antialiasing)
+        self.overview_view.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
+        self.overview_view.setAlignment(
+            self.QtCore.Qt.AlignmentFlag.AlignLeft | self.QtCore.Qt.AlignmentFlag.AlignTop
+        )
+        self.overview_scene.selectionChanged.connect(self._on_overview_selection_changed)
+        sheet_layout.addWidget(self.overview_view, 1)
+        layout.addWidget(sheet_frame, 1)
+
         self.overview_status = QtWidgets.QLabel("打开工作簿后，这里会显示项目状态。")
-        self.overview_status.setObjectName("emptyState")
+        self.overview_status.setObjectName("pageSubtitle")
         self.overview_status.setWordWrap(True)
-        activity_layout.addWidget(heading)
-        activity_layout.addWidget(self.overview_status, 1)
-        layout.addWidget(activity, 1)
+        layout.addWidget(self.overview_status)
         return page
 
-    def _overview_card(self, title: str, value: str, caption: str) -> Any:
+    def _overview_card(
+        self,
+        title: str,
+        value: str,
+        caption: str,
+        *,
+        object_name: str = "overviewCard",
+        clickable: bool = False,
+    ) -> Any:
         QtWidgets = self.QtWidgets
-        card = QtWidgets.QFrame()
-        card.setObjectName("overviewCard")
+        card = QtWidgets.QPushButton() if clickable else QtWidgets.QFrame()
+        card.setObjectName(object_name)
         layout = QtWidgets.QVBoxLayout(card)
         layout.setContentsMargins(18, 16, 18, 16)
         label = QtWidgets.QLabel(title)
@@ -298,6 +383,12 @@ class CockpitWindow:
         layout.addWidget(number)
         layout.addWidget(detail)
         card.value_label = number
+        if clickable:
+            card.setCursor(self.QtCore.Qt.CursorShape.PointingHandCursor)
+            card.clicked.connect(self._open_exceptions)
+            label.setAttribute(self.QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            number.setAttribute(self.QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            detail.setAttribute(self.QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         return card
 
     def _build_rack_page(self) -> Any:
@@ -367,10 +458,51 @@ class CockpitWindow:
         self.device_count_label = QtWidgets.QLabel("尚未载入设备")
         self.device_count_label.setObjectName("pageSubtitle")
         layout.addWidget(self.device_count_label)
+        filters = QtWidgets.QHBoxLayout()
+        filters.setSpacing(8)
+        self.device_rack_filter = self._filter_box(
+            "deviceRackFilter",
+            (("全部机柜", ""),),
+        )
+        self.device_status_filter = self._filter_box(
+            "deviceStatusFilter",
+            (
+                ("全部状态", "all"),
+                ("正常", "active"),
+                ("需关注", "attention"),
+            ),
+        )
+        self.device_height_filter = self._filter_box(
+            "deviceHeightFilter",
+            (
+                ("全部高度", "all"),
+                ("1U", "1u"),
+                ("2–4U", "2-4u"),
+                ("5U 及以上", "5u-plus"),
+            ),
+        )
+        self.device_sort_box = self._filter_box(
+            "deviceSortBox",
+            (
+                ("按源表顺序", "source"),
+                ("按名称", "name"),
+                ("按机柜 / U 位", "rack-u"),
+            ),
+        )
+        for box in (
+            self.device_rack_filter,
+            self.device_status_filter,
+            self.device_height_filter,
+            self.device_sort_box,
+        ):
+            box.currentIndexChanged.connect(self._refresh_device_table)
+            filters.addWidget(box)
+        filters.addStretch(1)
+        layout.addLayout(filters)
         self.device_table = QtWidgets.QTableWidget(0, 5)
         self.device_table.setObjectName("deviceTable")
         self.device_table.setHorizontalHeaderLabels(["设备", "机柜", "U 位", "高度", "状态"])
-        self._configure_table(self.device_table)
+        self._configure_table(self.device_table, stretch_column=0)
         self.device_table.itemSelectionChanged.connect(self._on_device_table_selected)
         layout.addWidget(self.device_table, 1)
         return page
@@ -384,29 +516,67 @@ class CockpitWindow:
         title = QtWidgets.QLabel("异常与冲突")
         title.setObjectName("pageTitle")
         layout.addWidget(title)
-        subtitle = QtWidgets.QLabel("错误会阻止写回；请先处理后再同步。")
+        subtitle = QtWidgets.QLabel(
+            "同类问题会合并显示。需要处理的项目会阻止同步；提醒不会。"
+            "请先在 Excel 中修正后保存，再重新扫描。"
+        )
         subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
+        action_row = QtWidgets.QHBoxLayout()
+        self.exception_rescan_button = QtWidgets.QPushButton("修正 Excel 后重新扫描")
+        self.exception_rescan_button.setObjectName("primaryButton")
+        self.exception_rescan_button.clicked.connect(self._rescan)
+        self.exception_help = QtWidgets.QLabel(
+            "原始代码和英文仅作为次级技术详情，不作为操作说明。"
+        )
+        self.exception_help.setObjectName("pageSubtitle")
+        self.exception_help.setWordWrap(True)
+        action_row.addWidget(self.exception_rescan_button)
+        action_row.addWidget(self.exception_help, 1)
+        layout.addLayout(action_row)
         self.exception_table = QtWidgets.QTableWidget(0, 3)
         self.exception_table.setObjectName("exceptionTable")
-        self.exception_table.setHorizontalHeaderLabels(["级别", "类型", "说明"])
-        self._configure_table(self.exception_table)
+        self.exception_table.setHorizontalHeaderLabels(["级别", "问题", "如何处理"])
+        self._configure_table(self.exception_table, stretch_column=2)
+        self.exception_table.itemSelectionChanged.connect(self._on_exception_selected)
         layout.addWidget(self.exception_table, 1)
+        self.exception_technical_toggle = QtWidgets.QPushButton("›  技术详情")
+        self.exception_technical_toggle.setObjectName("disclosureButton")
+        self.exception_technical_toggle.setCheckable(True)
+        self.exception_technical_toggle.toggled.connect(self._toggle_exception_technical)
+        layout.addWidget(self.exception_technical_toggle)
+        self.exception_technical = QtWidgets.QPlainTextEdit()
+        self.exception_technical.setObjectName("exceptionTechnicalDetail")
+        self.exception_technical.setReadOnly(True)
+        self.exception_technical.setMaximumHeight(110)
+        self.exception_technical.hide()
+        layout.addWidget(self.exception_technical)
         return page
 
-    def _configure_table(self, table: Any) -> None:
+    def _filter_box(self, object_name: str, items: tuple[tuple[str, str], ...]) -> Any:
+        box = self.QtWidgets.QComboBox()
+        box.setObjectName(object_name)
+        for label, value in items:
+            box.addItem(label, value)
+        return box
+
+    def _configure_table(self, table: Any, *, stretch_column: int | None = None) -> None:
         QtWidgets = self.QtWidgets
         table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         table.setAlternatingRowColors(True)
         table.verticalHeader().hide()
-        table.horizontalHeader().setStretchLastSection(True)
+        table.setWordWrap(True)
+        table.setTextElideMode(self.QtCore.Qt.TextElideMode.ElideNone)
+        table.horizontalHeader().setStretchLastSection(False)
         table.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.ResizeToContents
         )
+        stretch = table.columnCount() - 1 if stretch_column is None else stretch_column
         table.horizontalHeader().setSectionResizeMode(
-            table.columnCount() - 1,
+            stretch,
             QtWidgets.QHeaderView.ResizeMode.Stretch,
         )
 
@@ -425,6 +595,9 @@ class CockpitWindow:
         self.device_name = QtWidgets.QLabel("请选择设备")
         self.device_name.setObjectName("deviceName")
         self.device_name.setWordWrap(True)
+        self.device_name.setTextInteractionFlags(
+            self.QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         layout.addWidget(self.device_name)
         self.device_status = QtWidgets.QLabel("—")
         self.device_status.setObjectName("statusPill")
@@ -501,7 +674,7 @@ class CockpitWindow:
         self.pending_table = QtWidgets.QTableWidget(0, 4)
         self.pending_table.setObjectName("pendingTable")
         self.pending_table.setHorizontalHeaderLabels(["设备", "当前位置", "目标位置", "操作"])
-        self._configure_table(self.pending_table)
+        self._configure_table(self.pending_table, stretch_column=0)
         self.pending_table.setMaximumHeight(150)
         layout.addWidget(self.pending_table)
         self.pending_panel = panel
@@ -622,6 +795,17 @@ class CockpitWindow:
             #navButton:checked { background: #dcecff; color: #0866d9; font-weight: 700; }
             #metricCard, #overviewCard, #panel { background: #ffffff; border: 1px solid #e1e7ef;
                                                border-radius: 10px; }
+            #issueEntryButton, #overviewIssueEntry { background: #ffffff; border: 1px solid #e1e7ef;
+                                                    border-radius: 10px; }
+            #issueEntryButton:hover, #overviewIssueEntry:hover { border: 1px solid #1677ff;
+                                                                background: #f4f8ff; }
+            #issueEntryLink { text-align: left; background: #eef5ff; border: 1px solid #cfe0fb;
+                              border-radius: 8px; padding: 8px 10px; color: #0b63ce; font-weight: 700; }
+            #issueEntryLink:hover { background: #dcecff; }
+            #rackSortBox, #overviewSheetBox, #deviceRackFilter, #deviceStatusFilter,
+            #deviceHeightFilter, #deviceSortBox { background: #ffffff; border: 1px solid #d6dee9;
+                                                 border-radius: 8px; padding: 4px 8px; min-height: 28px; }
+            #overviewSheetView { background: #ffffff; }
             #metricValue { font-size: 18px; font-weight: 750; color: #172033; }
             #overviewValue { font-size: 28px; font-weight: 750; color: #172033; }
             #sectionEyebrow { font-size: 12px; font-weight: 700; color: #667085; padding: 8px 3px 2px; }
@@ -700,6 +884,8 @@ class CockpitWindow:
         self.detail_panel.setVisible(page_id in {self.PAGE_RACKS, self.PAGE_DEVICES})
         if page_id == self.PAGE_RACKS:
             self.QtCore.QTimer.singleShot(0, self._fit_rack_view)
+        if page_id == self.PAGE_OVERVIEW:
+            self.QtCore.QTimer.singleShot(0, self._fit_overview_view)
 
     def _refresh_all(self) -> None:
         if self.session is None:
@@ -719,6 +905,7 @@ class CockpitWindow:
             f"{session.status_message}\n\n源工作簿：{session.workbook_path.name}\n"
             "设备移动会先进入待同步列表，只有顶部“同步更改”会提交。"
         )
+        self._refresh_overview_sheet_names()
         self.window.statusBar().showMessage(session.status_message)
 
     def _refresh_metrics(self) -> None:
@@ -726,17 +913,21 @@ class CockpitWindow:
             return
         racks = self.session.rack_rows()
         devices = self.session.device_rows()
-        issues = self.session.conflict_rows()
+        issues = self.session.issue_rows()
         occupied = sum(int(row["occupied_u"]) for row in racks)
         capacity = sum(int(row["height_u"]) for row in racks)
         percent = round(occupied / capacity * 100) if capacity else 0
         self.rack_metric.value_label.setText(str(len(racks)))
         self.device_metric.value_label.setText(str(len(devices)))
-        self.issue_metric.value_label.setText(str(len(issues)))
+        issue_count = sum(int(row["count"]) for row in issues)
+        self.issue_metric.value_label.setText(str(issue_count))
         self.overview_racks.value_label.setText(str(len(racks)))
         self.overview_devices.value_label.setText(str(len(devices)))
         self.overview_occupancy.value_label.setText(f"{percent}%")
-        self.overview_issues.value_label.setText(str(len(issues)))
+        self.overview_issues.value_label.setText(str(issue_count))
+        self.issue_entry_button.setText(
+            "查看待处理 / 异常" if issue_count == 0 else f"查看待处理 / 异常（{issue_count}）"
+        )
 
     def _refresh_rack_list(self) -> None:
         if self.session is None:
@@ -750,7 +941,8 @@ class CockpitWindow:
         self.rack_list.blockSignals(True)
         self.rack_list.clear()
         selected_item = None
-        for row in self.session.rack_rows():
+        sort_by = str(self.rack_sort_box.currentData() or "source")
+        for row in self.session.rack_rows(sort_by=sort_by):
             rack_id = str(row["rack_id"])
             rack_name = str(row["rack_name"])
             if query and query not in rack_name.casefold() and rack_id not in matching_racks:
@@ -763,7 +955,11 @@ class CockpitWindow:
             )
             item = self.QtWidgets.QListWidgetItem(text)
             item.setData(self.QtCore.Qt.ItemDataRole.UserRole, rack_id)
-            item.setToolTip(f"{row['device_count']} 台设备，剩余 {row['available_u']}U")
+            item.setToolTip(
+                f"{rack_name}\n{row['sheet_name'] or '未标注工作表'} · "
+                f"{row['device_count']} 台设备，剩余 {row['available_u']}U"
+            )
+            item.setSizeHint(self.QtCore.QSize(self.rack_list.viewport().width(), 48))
             self.rack_list.addItem(item)
             if rack_id == self._selected_rack:
                 selected_item = item
@@ -781,8 +977,14 @@ class CockpitWindow:
         if self.session is None:
             self.device_table.setRowCount(0)
             return
+        self._refresh_device_filter_options()
+        rack_id = self.device_rack_filter.currentData()
         rows, total = self.session.device_page(
             self.search_box.text(),
+            rack_id=str(rack_id) if rack_id else None,
+            status_filter=str(self.device_status_filter.currentData() or "all"),
+            height_filter=str(self.device_height_filter.currentData() or "all"),
+            sort_by=str(self.device_sort_box.currentData() or "source"),
             limit=self.DEVICE_PAGE_LIMIT,
         )
         self.device_table.blockSignals(True)
@@ -796,7 +998,7 @@ class CockpitWindow:
                     f"U{max(row['start_u'], row['end_u'])}"
                 )
             values = [
-                str(row["primary_label"]),
+                cell_display_text(str(row["display_text"] or row["primary_label"])),
                 str(row["rack_name"] or "未放置"),
                 position,
                 "—" if row["height_u"] is None else f"{row['height_u']}U",
@@ -804,6 +1006,9 @@ class CockpitWindow:
             ]
             for column, value in enumerate(values):
                 item = self.QtWidgets.QTableWidgetItem(value)
+                item.setTextAlignment(
+                    self.QtCore.Qt.AlignmentFlag.AlignTop | self.QtCore.Qt.AlignmentFlag.AlignLeft
+                )
                 if column == 0:
                     item.setData(
                         self.QtCore.Qt.ItemDataRole.UserRole,
@@ -815,6 +1020,7 @@ class CockpitWindow:
         self.device_table.blockSignals(False)
         if selected_row >= 0:
             self.device_table.selectRow(selected_row)
+        self.device_table.resizeRowsToContents()
         shown = len(rows)
         suffix = "" if total <= shown else f"（为保持流畅，仅显示前 {shown} 条）"
         self.device_count_label.setText(f"找到 {total} 台设备{suffix}")
@@ -822,17 +1028,31 @@ class CockpitWindow:
     def _refresh_exceptions(self) -> None:
         if self.session is None:
             return
-        rows = self.session.conflict_rows()[: self.DEVICE_PAGE_LIMIT]
+        rows = self.session.issue_rows()[: self.DEVICE_PAGE_LIMIT]
         self.exception_table.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
-            severity = "错误" if row.get("severity") == "error" else "提醒"
-            values = [severity, str(row.get("code", "")), str(row.get("message", ""))]
+            values = [
+                str(row["level"]),
+                str(row["title"]),
+                str(row["guidance"]),
+            ]
             for column, value in enumerate(values):
-                self.exception_table.setItem(
-                    row_index,
-                    column,
-                    self.QtWidgets.QTableWidgetItem(value),
+                item = self.QtWidgets.QTableWidgetItem(value)
+                item.setTextAlignment(
+                    self.QtCore.Qt.AlignmentFlag.AlignTop | self.QtCore.Qt.AlignmentFlag.AlignLeft
                 )
+                if column == 0:
+                    item.setData(
+                        self.QtCore.Qt.ItemDataRole.UserRole,
+                        str(row["technical_detail"]),
+                    )
+                self.exception_table.setItem(row_index, column, item)
+        self.exception_table.resizeRowsToContents()
+        if rows:
+            self.exception_table.selectRow(0)
+            self._on_exception_selected()
+        else:
+            self.exception_technical.setPlainText("当前没有需要处理的异常。")
 
     def _refresh_pending(self) -> None:
         rows = self.session.pending_rows() if self.session is not None else []
@@ -855,12 +1075,15 @@ class CockpitWindow:
                 row.get("target_end_u"),
             )
             values = [
-                str(row["primary_label"]),
+                cell_display_text(str(row["display_text"] or row["primary_label"])),
                 f"{row['source_rack_name']}  {source_u}",
                 f"{row['target_rack_name']}  {target_u}",
             ]
             for column, value in enumerate(values):
                 item = self.QtWidgets.QTableWidgetItem(value)
+                item.setTextAlignment(
+                    self.QtCore.Qt.AlignmentFlag.AlignTop | self.QtCore.Qt.AlignmentFlag.AlignLeft
+                )
                 if column == 0:
                     item.setData(
                         self.QtCore.Qt.ItemDataRole.UserRole,
@@ -875,6 +1098,8 @@ class CockpitWindow:
                 )
             )
             self.pending_table.setCellWidget(row_index, 3, remove)
+
+        self.pending_table.resizeRowsToContents()
 
     def _render_selected_rack(self) -> None:
         self.rack_scene.clear()
@@ -894,7 +1119,12 @@ class CockpitWindow:
         if rack is None:
             return
         height_u = int(rack["height_u"])
-        unit_height = 18.0
+        segments = self.session.occupancy_segments(self._selected_rack)
+        per_u_lines = 1.0
+        for segment in segments:
+            lines = cell_display_text(str(segment["display_text"])).count("\n") + 1
+            per_u_lines = max(per_u_lines, lines / max(int(segment["height_u"]), 1))
+        unit_height = max(20.0, min(52.0, 16.0 * per_u_lines + 6.0))
         left = 56.0
         top = 24.0
         width = 380.0
@@ -925,7 +1155,7 @@ class CockpitWindow:
             ("#ffedd5", "#f97316"),
             ("#cffafe", "#06b6d4"),
         )
-        for segment in self.session.occupancy_segments(self._selected_rack):
+        for segment in segments:
             device_id = str(segment["device_id"])
             index = sum(device_id.encode("utf-8")) % len(palette)
             fill_color, border_color = palette[index]
@@ -947,22 +1177,17 @@ class CockpitWindow:
             )
             if device_id == self._selected_device:
                 rect.setSelected(True)
-            primary = str(segment["primary_label"])
-            if len(primary) > 42:
-                primary = primary[:41] + "…"
-            device_text = primary
-            if int(segment["height_u"]) >= 2:
-                device_text += (
-                    f"\nU{segment['start_u']}–U{segment['end_u']} "
-                    f"({segment['height_u']}U)"
-                )
-            text = self.rack_scene.addText(device_text)
+            device_text = cell_display_text(str(segment["display_text"]))
+            text = self.rack_scene.addText("")
+            text.setPlainText(device_text)
             font = text.font()
             font.setPointSizeF(9.5)
             text.setFont(font)
             text.setDefaultTextColor(self.QtGui.QColor("#17335f"))
+            text.document().setDocumentMargin(1)
             text.setTextWidth(width - 30)
-            text.setPos(left + 16, y + max(0, segment_height / 2 - 18))
+            text.setPos(left + 16, y + 4)
+            text.setToolTip(device_text)
             text.setAcceptedMouseButtons(self.QtCore.Qt.MouseButton.NoButton)
             self._rack_scene_device_count += 1
 
@@ -1007,7 +1232,9 @@ class CockpitWindow:
             self.device_status.hide()
             self.move_button.setEnabled(False)
             return
-        self.device_name.setText(str(row["primary_label"]))
+        self.device_name.setText(
+            cell_display_text(str(row["display_text"] or row["primary_label"]))
+        )
         self.device_status.setText(
             "正常" if row["status"] == "active" else str(row["status"])
         )
@@ -1084,7 +1311,9 @@ class CockpitWindow:
         row = self._device_row(self._selected_device)
         if row is None or row["height_u"] is None:
             return
-        self.drawer_device_name.setText(str(row["primary_label"]))
+        self.drawer_device_name.setText(
+            cell_display_text(str(row["display_text"] or row["primary_label"]))
+        )
         self.target_rack_box.blockSignals(True)
         self.target_rack_box.clear()
         for rack in self.session.rack_rows():
@@ -1142,7 +1371,12 @@ class CockpitWindow:
             end_u,
         )
         if plan.conflicts:
-            self._set_preview_state("error", "发现冲突", plan.conflicts[0].message)
+            conflict = plan.conflicts[0]
+            self._set_preview_state(
+                "error",
+                "发现冲突",
+                friendly_conflict_text(conflict.code, conflict.message, conflict.severity),
+            )
             self.drawer_add_button.setEnabled(False)
         elif not any(action.device_id == self._selected_device for action in plan.actions):
             self._set_preview_state("neutral", "当前位置", "设备已经位于这个位置，无需更改。")
@@ -1181,7 +1415,12 @@ class CockpitWindow:
             end_u,
         )
         if plan.conflicts:
-            self._set_preview_state("error", "发现冲突", plan.conflicts[0].message)
+            conflict = plan.conflicts[0]
+            self._set_preview_state(
+                "error",
+                "发现冲突",
+                friendly_conflict_text(conflict.code, conflict.message, conflict.severity),
+            )
             return
         self.move_drawer.hide()
         self._refresh_all()
@@ -1235,12 +1474,18 @@ class CockpitWindow:
                 f"已安全写入 {len(result.plan.actions)} 项更改，并创建备份。",
             )
         else:
-            details = "\n".join(result.errors[:5])
-            self.QtWidgets.QMessageBox.warning(
-                self.window,
-                "同步未完成",
-                result.message + (f"\n\n{details}" if details else ""),
+            conflicts = result.plan.conflicts
+            friendly = "\n\n".join(
+                friendly_conflict_text(item.code, item.message, item.severity)
+                for item in conflicts[:5]
             )
+            box = self.QtWidgets.QMessageBox(self.window)
+            box.setIcon(self.QtWidgets.QMessageBox.Icon.Warning)
+            box.setWindowTitle("同步未完成")
+            box.setText("同步未完成。为保护源文件，这次操作没有改写 Excel。")
+            box.setInformativeText(friendly or result.message)
+            box.setDetailedText("\n".join(result.errors[:8]))
+            box.exec()
 
     def _open_workbook(self) -> None:
         path, _selected_filter = self.QtWidgets.QFileDialog.getOpenFileName(
@@ -1337,7 +1582,14 @@ class CockpitWindow:
             self._show_error("恢复失败", error)
 
     def _show_error(self, title: str, error: Exception) -> None:
-        self.QtWidgets.QMessageBox.critical(self.window, title, str(error))
+
+        box = self.QtWidgets.QMessageBox(self.window)
+        box.setIcon(self.QtWidgets.QMessageBox.Icon.Critical)
+        box.setWindowTitle(title)
+        box.setText(friendly_exception(error))
+        box.setInformativeText("为保护源文件，这次失败的操作没有写入 Excel。")
+        box.setDetailedText(f"{type(error).__name__}: {error}")
+        box.exec()
 
     def _confirm_discard_pending(self, action: str) -> bool:
         if self.session is None or not self.session.pending_moves:
@@ -1359,6 +1611,233 @@ class CockpitWindow:
         low = min(int(start_u), int(end_u))
         high = max(int(start_u), int(end_u))
         return f"U{low}" if low == high else f"U{low}–U{high}"
+
+
+    def _open_exceptions(self, *_args: Any) -> None:
+        self._set_page(self.PAGE_EXCEPTIONS)
+
+    def _toggle_exception_technical(self, expanded: bool) -> None:
+        self.exception_technical.setVisible(expanded)
+        self.exception_technical_toggle.setText(
+            "⌄  技术详情" if expanded else "›  技术详情"
+        )
+
+    def _on_exception_selected(self) -> None:
+        row_index = self.exception_table.currentRow()
+        item = self.exception_table.item(row_index, 0) if row_index >= 0 else None
+        detail = ""
+        if item is not None:
+            detail = str(item.data(self.QtCore.Qt.ItemDataRole.UserRole) or "")
+        self.exception_technical.setPlainText(detail or "当前没有可展开的技术详情。")
+
+    def _refresh_device_filter_options(self) -> None:
+        if self.session is None:
+            return
+        current = self.device_rack_filter.currentData()
+        self.device_rack_filter.blockSignals(True)
+        self.device_rack_filter.clear()
+        self.device_rack_filter.addItem("全部机柜", "")
+        for rack in self.session.rack_rows(sort_by="name"):
+            self.device_rack_filter.addItem(str(rack["rack_name"]), str(rack["rack_id"]))
+        index = self.device_rack_filter.findData(current)
+        self.device_rack_filter.setCurrentIndex(max(index, 0))
+        self.device_rack_filter.blockSignals(False)
+
+    def _refresh_overview_sheet_names(self) -> None:
+        if self.session is None:
+            self.overview_sheet_box.clear()
+            self.overview_scene.clear()
+            return
+        current = self.overview_sheet_box.currentData()
+        names = self.session.overview_sheet_names()
+        self.overview_sheet_box.blockSignals(True)
+        self.overview_sheet_box.clear()
+        for name in names:
+            self.overview_sheet_box.addItem(name, name)
+        if current:
+            index = self.overview_sheet_box.findData(current)
+            self.overview_sheet_box.setCurrentIndex(max(index, 0))
+        elif names:
+            self.overview_sheet_box.setCurrentIndex(0)
+        self.overview_sheet_box.blockSignals(False)
+        self._render_overview_sheet()
+
+    def _fit_overview_view(self) -> None:
+        if not self.overview_scene.items():
+            return
+        self.overview_view.resetTransform()
+        self.overview_view.fitInView(
+            self.overview_scene.sceneRect(),
+            self.QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+        )
+
+    def _axis_positions(
+        self,
+        count: int,
+        sizes: dict[int, float],
+        default: float,
+        scale: float,
+        minimum: float,
+    ) -> list[float]:
+        positions = [0.0, 0.0]
+        for index in range(1, count + 1):
+            size = max(minimum, float(sizes.get(index, default)) * scale)
+            positions.append(positions[-1] + size)
+        return positions
+
+    def _sheet_rect(
+        self,
+        bounds: tuple[int, int, int, int],
+        col_pos: list[float],
+        row_pos: list[float],
+    ) -> tuple[float, float, float, float]:
+        min_col, min_row, max_col, max_row = bounds
+        max_col = min(max_col, len(col_pos) - 2)
+        max_row = min(max_row, len(row_pos) - 2)
+        min_col = min(max(min_col, 1), max_col)
+        min_row = min(max(min_row, 1), max_row)
+        x = col_pos[min_col]
+        y = row_pos[min_row]
+        width = max(col_pos[max_col + 1] - x, 12.0)
+        height = max(row_pos[max_row + 1] - y, 10.0)
+        return x, y, width, height
+
+    def _add_sheet_label(
+        self,
+        text: str,
+        x: float,
+        y: float,
+        width: float,
+        color: str,
+        size: float = 8.0,
+    ) -> None:
+        label = self.overview_scene.addText("")
+        label.setPlainText(cell_display_text(text))
+        font = label.font()
+        font.setPointSizeF(size)
+        label.setFont(font)
+        label.setDefaultTextColor(self.QtGui.QColor(color))
+        label.document().setDocumentMargin(1)
+        label.setTextWidth(max(width - 6, 20))
+        label.setPos(x + 3, y + 2)
+        label.setAcceptedMouseButtons(self.QtCore.Qt.MouseButton.NoButton)
+
+    def _render_overview_sheet(self, *_args: Any) -> None:
+        self.overview_scene.clear()
+        if self.session is None:
+            return
+        sheet_name = self.overview_sheet_box.currentData()
+        if not sheet_name:
+            note = self.overview_scene.addText("没有可预览的机柜工作表。")
+            note.setDefaultTextColor(self.QtGui.QColor("#667085"))
+            self.overview_scene.setSceneRect(0, 0, 360, 80)
+            return
+        try:
+            sheet = self.session.overview_sheet(str(sheet_name))
+        except Exception as error:  # noqa: BLE001
+            note = self.overview_scene.addText(friendly_exception(error))
+            note.setTextWidth(420)
+            note.setDefaultTextColor(self.QtGui.QColor("#b42318"))
+            self.overview_scene.setSceneRect(0, 0, 460, 120)
+            return
+
+        max_column = max(int(sheet["max_column"]), 1)
+        max_row = max(int(sheet["max_row"]), 1)
+        col_pos = self._axis_positions(
+            max_column,
+            {int(key): float(value) for key, value in sheet["column_widths"].items()},
+            float(sheet["default_column_width"]),
+            7.0 * 0.42,
+            16.0,
+        )
+        row_pos = self._axis_positions(
+            max_row,
+            {int(key): float(value) for key, value in sheet["row_heights"].items()},
+            float(sheet["default_row_height"]),
+            (96.0 / 72.0) * 0.42,
+            10.0,
+        )
+        sheet_width = col_pos[-1] + 24
+        sheet_height = row_pos[-1] + 24
+        self.overview_scene.addRect(
+            0,
+            0,
+            sheet_width,
+            sheet_height,
+            self.QtGui.QPen(self.QtGui.QColor("#d5dce6"), 1),
+            self.QtGui.QBrush(self.QtGui.QColor("#fbfcfe")),
+        )
+        for block in sheet["context_blocks"]:
+            x, y, width, height = self._sheet_rect(block["source_bounds"], col_pos, row_pos)
+            self.overview_scene.addRect(
+                x,
+                y,
+                width,
+                height,
+                self.QtGui.QPen(self.QtGui.QColor("#d0d7e2"), 1),
+                self.QtGui.QBrush(self.QtGui.QColor("#f3f6fb")),
+            )
+            self._add_sheet_label(str(block["display_text"]), x, y, width, "#475467", 7.5)
+        palette = ("#dbeafe", "#dcfce7", "#f3e8ff", "#ffedd5", "#cffafe")
+        for rack_index, rack in enumerate(sheet["racks"]):
+            x, y, width, height = self._sheet_rect(rack["bounds"], col_pos, row_pos)
+            fill = palette[rack_index % len(palette)]
+            rect = self.overview_scene.addRect(
+                x,
+                y,
+                width,
+                height,
+                self.QtGui.QPen(self.QtGui.QColor("#3b82f6"), 1.6),
+                self.QtGui.QBrush(self.QtGui.QColor(fill)),
+            )
+            rect.setData(0, str(rack["rack_id"]))
+            rect.setFlag(
+                self.QtWidgets.QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,
+                True,
+            )
+            title = f"{rack['rack_name']}\n{rack['height_u']}U"
+            self._add_sheet_label(title, x, y, width, "#17335f", 8.5)
+            for device in rack["devices"]:
+                device_bounds = device.get("source_bounds")
+                if not device_bounds:
+                    continue
+                dx, dy, dw, dh = self._sheet_rect(device_bounds, col_pos, row_pos)
+                self.overview_scene.addRect(
+                    dx,
+                    dy,
+                    dw,
+                    dh,
+                    self.QtGui.QPen(self.QtGui.QColor("#64748b"), 1),
+                    self.QtGui.QBrush(self.QtGui.QColor("#ffffff")),
+                )
+                self._add_sheet_label(
+                    str(device["display_text"]),
+                    dx,
+                    dy,
+                    dw,
+                    "#1f2937",
+                    7.0,
+                )
+        self.overview_scene.setSceneRect(0, 0, sheet_width, sheet_height)
+        if sheet.get("context_truncated"):
+            self.overview_status.setText(
+                f"{self.session.status_message}  工作表视图已截断部分背景文字，机柜和设备位置仍完整。"
+            )
+        self.QtCore.QTimer.singleShot(0, self._fit_overview_view)
+
+    def _on_overview_selection_changed(self) -> None:
+        try:
+            selected = self.overview_scene.selectedItems()
+        except RuntimeError:
+            return
+        if not selected:
+            return
+        rack_id = selected[0].data(0)
+        if not rack_id:
+            return
+        self._selected_rack = str(rack_id)
+        self._refresh_rack_list()
+        self._set_page(self.PAGE_RACKS)
 
 
 def launch(workbook: Path | None = None) -> int:
