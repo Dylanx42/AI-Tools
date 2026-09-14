@@ -41,4 +41,10 @@
 
 如果某个工具需要 GitHub 自动检查，再在 `.github/workflows/` 加一个只盯这个目录的工作流。
 
-给 Codex 下任务前，让它先读 [`AGENTS.md`](./AGENTS.md)。
+## 给 Agent 的入口
+
+这个仓库由 Agent 日常维护，不依赖人工点 GitHub。
+
+任何新增、修改、提交、开 PR、合并到 `main` 的任务，都先读 [`AGENTS.md`](./AGENTS.md)。默认从最新 `origin/main` 开独立分支，一次只动一个项目，用 PR squash 合进 `main` 后删除临时分支。
+
+不要在 RackTool 或其他功能分支上夹带无关项目。
