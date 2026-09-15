@@ -53,6 +53,7 @@ src/racktool/
 │   ├── extractor.py
 │   ├── mapper.py
 │   ├── validator.py
+│   ├── export.py
 │   ├── sync.py
 │   └── backup.py
 │
@@ -134,6 +135,25 @@ RackCore Validate
  ↓
 重新解析
 ```
+
+### 4.4 标准 Excel 导出
+
+```text
+Structured Rack Project
+ ↓
+RackCore Exporter
+ ↓
+“机柜图” + “设备位置表”
+ ↓
+Temporary XLSX
+ ↓
+Reload + content validation
+ ↓
+Atomic replace of export target
+```
+
+标准导出生成独立工作簿，不修改绑定的源 XLSX。GUI 和 CLI 只选择目标并调用 RackCore；机柜顺序、
+U 位、换行文字、筛选表和保存后验证均由同一核心实现负责。
 
 ## 5. 为什么 RackCore 不依赖 Agent
 

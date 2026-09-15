@@ -274,9 +274,10 @@ class CockpitWindow:
         self.rescan_button.setObjectName("secondaryButton")
         self.rescan_button.clicked.connect(self._rescan)
         layout.addWidget(self.rescan_button)
-        self.export_button = QtWidgets.QPushButton("⇩ 导出")
+        self.export_button = QtWidgets.QPushButton("⇩ 导出表格")
         self.export_button.setObjectName("secondaryButton")
-        self.export_button.clicked.connect(self._export_json)
+        self.export_button.setToolTip("导出机柜图和设备位置表，不修改源 Excel")
+        self.export_button.clicked.connect(self._export_xlsx)
         layout.addWidget(self.export_button)
         self.pending_button = QtWidgets.QPushButton("待同步  0")
         self.pending_button.setObjectName("pendingButton")
@@ -778,6 +779,7 @@ class CockpitWindow:
         file_menu.addAction("打开项目…", self._open_project)
         file_menu.addSeparator()
         file_menu.addAction("重新扫描", self._rescan)
+        file_menu.addAction("导出 Excel 表格…", self._export_xlsx)
         file_menu.addAction("导出 JSON…", self._export_json)
         file_menu.addAction("恢复备份…", self._restore_backup)
         file_menu.addSeparator()
@@ -1569,6 +1571,26 @@ class CockpitWindow:
             self._refresh_all()
         except Exception as error:  # noqa: BLE001
             self._show_error("导出失败", error)
+
+    def _export_xlsx(self) -> None:
+        if self.session is None:
+            return
+        default_path = self.session.workbook_path.with_name(
+            f"{self.session.workbook_path.stem}-RackTool导出.xlsx"
+        )
+        path, _selected_filter = self.QtWidgets.QFileDialog.getSaveFileName(
+            self.window,
+            "导出 Excel 表格",
+            str(default_path),
+            "Excel 工作簿 (*.xlsx)",
+        )
+        if not path:
+            return
+        try:
+            self.session.export_xlsx(Path(path))
+            self._refresh_all()
+        except Exception as error:  # noqa: BLE001
+            self._show_error("表格导出失败", error)
 
     def _restore_backup(self) -> None:
         if self.session is None:

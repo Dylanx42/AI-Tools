@@ -1,4 +1,5 @@
 from racktool.core.analyzer import analyze_workbook
+from racktool.core.export import export_project_workbook
 from racktool.core.project import import_workbook, rescan_workbook
 from racktool.core.service import (
     commit_write_plan,
@@ -20,6 +21,7 @@ __all__ = [
     "analyze_workbook",
     "apply_writeback",
     "commit_write_plan",
+    "export_project_workbook",
     "import_project",
     "import_workbook",
     "load_project_state",

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from racktool.core.backup import list_backups
+from racktool.core.export import export_project_workbook
 from racktool.core.identity import normalize_path
 from racktool.core.service import (
     commit_write_plan,
@@ -697,6 +698,17 @@ class GuiSession:
             encoding="utf-8",
         )
         self.status_message = f"已导出 {output.name}"
+        self.history.append(self.status_message)
+        return output
+
+    def export_xlsx(self, path: Path) -> Path:
+        output = export_project_workbook(self.project, path, overwrite=True)
+        if self.pending_moves:
+            self.status_message = (
+                f"已导出 {output.name}（不含 {len(self.pending_moves)} 项待同步更改）"
+            )
+        else:
+            self.status_message = f"已导出 {output.name}"
         self.history.append(self.status_message)
         return output
 
