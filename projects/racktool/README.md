@@ -52,8 +52,13 @@ mypy src
 
 ```bash
 python -m pip install -e '.[gui]'
+racktool-gui
+racktool gui
 racktool gui path/to/rack-layout.xlsx
 ```
+
+`racktool-gui` 和不带路径的 `racktool gui` 默认打开空项目，不会自动载入示例、测试或最近使用的
+工作簿；只有用户点击“打开…”或明确传入 `.xlsx` 路径后才读取数据。
 
 ## CLI
 
