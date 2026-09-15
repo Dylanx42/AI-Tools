@@ -5,7 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -146,6 +146,37 @@ def test_global_sync_is_the_only_device_move_write_control() -> None:
     assert text.count("apply_pending_moves()") == 1
     assert 'setObjectName("globalSyncButton")' in text
     assert "openpyxl" not in text
+
+
+def test_export_button_creates_two_sheet_excel_workbook(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    output = tmp_path / "gui-export.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    cockpit = CockpitWindow()
+    try:
+        cockpit.load_session(session)
+        monkeypatch.setattr(
+            cockpit.QtWidgets.QFileDialog,
+            "getSaveFileName",
+            lambda *_args, **_kwargs: (str(output), "Excel 工作簿 (*.xlsx)"),
+        )
+
+        cockpit.export_button.click()
+
+        assert cockpit.export_button.text() == "⇩ 导出表格"
+        assert output.is_file()
+        workbook = load_workbook(output, read_only=True, data_only=False)
+        try:
+            assert workbook.sheetnames == ["机柜图", "设备位置表"]
+        finally:
+            workbook.close()
+        assert session.status_message == "已导出 gui-export.xlsx"
+    finally:
+        cockpit.widget().close()
 
 
 def _make_sorted_layout(path: Path, *, multiline: bool = False) -> None:
