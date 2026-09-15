@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from racktool.gui import window as gui_window
 from racktool.gui.session import GuiSession
 from racktool.gui.window import CockpitWindow, create_app
 from racktool.models.domain import Device
@@ -44,6 +46,24 @@ def _make_layout(path: Path) -> None:
 @pytest.fixture(scope="module", autouse=True)
 def qt_application() -> object:
     return create_app([])
+
+
+def test_gui_entrypoint_starts_with_no_workbook_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[Path | None] = []
+    monkeypatch.setattr(sys, "argv", ["racktool-gui"])
+    monkeypatch.setattr(
+        gui_window,
+        "launch",
+        lambda workbook=None: opened.append(workbook) or 0,
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        gui_window.launch_main()
+
+    assert exit_info.value.code == 0
+    assert opened == [None]
 
 
 def test_window_uses_navigable_pages_and_caps_visible_devices(tmp_path: Path) -> None:

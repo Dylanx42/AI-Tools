@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from xml.etree import ElementTree
 from zipfile import ZipFile
 
 import pytest
@@ -52,6 +53,22 @@ def _make_layout(path: Path, *, blank_target_merge: bool = False) -> None:
     workbook.save(path)
 
 
+def _add_empty_fill_record(path: Path) -> None:
+    with ZipFile(path) as archive:
+        members = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    styles = next(payload for info, payload in members if info.filename == "xl/styles.xml")
+    root = ElementTree.fromstring(styles)
+    namespace = root.tag.split("}", 1)[0] + "}"
+    fills = root.find(f"{namespace}fills")
+    assert fills is not None
+    ElementTree.SubElement(fills, f"{namespace}fill")
+    fills.set("count", str(len(fills)))
+    normalized = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, payload in members:
+            archive.writestr(info, normalized if info.filename == "xl/styles.xml" else payload)
+
+
 def _make_multicolumn_layout(path: Path, *, merge_device: bool = True) -> None:
     workbook = Workbook()
     sheet = workbook.active
@@ -100,6 +117,40 @@ def test_normal_move_updates_1u_and_preserves_unrelated_data(tmp_path: Path) -> 
         assert workbook.active["B10"].value == "设备 B"
         assert workbook.active["Z1"].value == "保留备注"
         assert [sheet.title for sheet in workbook.worksheets] == ["机柜", "无关表"]
+    finally:
+        workbook.close()
+
+
+def test_safe_sync_handles_excel_tolerated_empty_fill_with_original_backup(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "empty-fill.xlsx"
+    _make_layout(path)
+    _add_empty_fill_record(path)
+    original = path.read_bytes()
+    project = import_workbook(path)
+    device = _device(project, "设备 B")
+    rack_id = project.racks[0].rack_id
+
+    plan = plan_device_move(
+        project,
+        device.device_id,
+        rack_id,
+        4,
+        4,
+        workbook_path=path,
+    )
+    assert path.read_bytes() == original
+
+    result = apply_writeback(path, project, plan)
+
+    assert result.status == "applied"
+    assert result.backup_path is not None
+    assert Path(result.backup_path).read_bytes() == original
+    workbook = load_workbook(path)
+    try:
+        assert workbook.active["B10"].value == "设备 B"
+        assert workbook.active["Z1"].value == "保留备注"
     finally:
         workbook.close()
 

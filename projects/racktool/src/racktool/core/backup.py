@@ -5,9 +5,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from openpyxl import load_workbook
-
 from racktool.core.identity import normalize_path, sha256_file, unique_suffix
+from racktool.core.ooxml import load_xlsx_workbook
 
 
 def create_backup(source: Path) -> Path:
@@ -38,7 +37,7 @@ def list_backups(source: Path) -> list[Path]:
 
 
 def _reload_xlsx(path: Path) -> None:
-    workbook = load_workbook(path, read_only=False, data_only=False)
+    workbook = load_xlsx_workbook(path)
     workbook.close()
 
 

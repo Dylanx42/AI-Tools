@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import Any, Literal
 from zipfile import BadZipFile, ZipFile
 
-from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import range_boundaries
 from openpyxl.workbook import Workbook as OpenpyxlWorkbook
 
 from racktool.core.backup import create_backup, create_temp_copy
 from racktool.core.identity import normalize_path, sha256_file
+from racktool.core.ooxml import load_xlsx_workbook as load_workbook
 from racktool.core.project import (
     _rescan_snapshot,
     project_error_conflicts,
