@@ -37,6 +37,7 @@ Profile 只描述布局规则，不保存设备业务数据。错误、冲突或
 新版 macOS GUI 用户验收、Windows GUI 检查，以及 Microsoft Excel/WPS 实机打开和写回仍为
 **MANUAL VALIDATION PENDING**，不能由自动化或启动成功替代。
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
+本轮功能与验证摘要见 [2026-09-16 进度更新](docs/updates/2026-09-16.md)。
 
 ## 安装与验证
 
