@@ -43,6 +43,30 @@ def _make_layout(path: Path) -> None:
     workbook.save(path)
 
 
+def _make_multirow_layout(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "机柜布局"
+
+    def add_rack(name: str, title_row: int, start_column: int) -> None:
+        sheet.merge_cells(
+            start_row=title_row,
+            start_column=start_column,
+            end_row=title_row,
+            end_column=start_column + 2,
+        )
+        sheet.cell(title_row, start_column, name)
+        _fill_descending_axis(sheet, start_column, title_row + 1, 6)
+        _fill_descending_axis(sheet, start_column + 2, title_row + 1, 6)
+
+    for index in range(6):
+        add_rack(f"A{index + 1:02d}", 1, index * 4 + 1)
+    for index in range(3):
+        add_rack(f"B{index + 1:02d}", 10, index * 4 + 1)
+    workbook.save(path)
+
+
 def test_export_contains_rack_diagram_and_filterable_device_positions(
     tmp_path: Path,
 ) -> None:
@@ -107,6 +131,119 @@ def test_export_contains_rack_diagram_and_filterable_device_positions(
             for row in sheet.iter_rows()
             for cell in row
         )
+    finally:
+        workbook.close()
+
+
+def test_export_preserves_source_rack_rows_instead_of_wrapping_every_four(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "multirow.xlsx"
+    output = tmp_path / "multirow-export.xlsx"
+    _make_multirow_layout(source)
+    session = GuiSession.open_workbook(source)
+
+    session.export_xlsx(output)
+
+    workbook = load_workbook(output, read_only=False, data_only=False)
+    try:
+        diagram = workbook["机柜图"]
+        rack_names = {
+            *(f"A{index:02d}" for index in range(1, 7)),
+            *(f"B{index:02d}" for index in range(1, 4)),
+        }
+        coordinates = {
+            str(cell.value): (cell.row, cell.column)
+            for row in diagram.iter_rows()
+            for cell in row
+            if cell.value in rack_names
+        }
+        top_rows = {coordinates[f"A{index:02d}"][0] for index in range(1, 7)}
+        bottom_rows = {coordinates[f"B{index:02d}"][0] for index in range(1, 4)}
+
+        assert len(top_rows) == 1
+        assert len(bottom_rows) == 1
+        assert top_rows != bottom_rows
+        assert [coordinates[f"A{index:02d}"][1] for index in range(1, 7)] == [
+            1,
+            6,
+            11,
+            16,
+            21,
+            26,
+        ]
+        assert "每排机柜按源工作表中的行列位置排列" in str(diagram["A2"].value)
+    finally:
+        workbook.close()
+
+
+def test_export_preserves_source_workbook_sheet_order(tmp_path: Path) -> None:
+    source = tmp_path / "sheet-order.xlsx"
+    output = tmp_path / "sheet-order-export.xlsx"
+    workbook = Workbook()
+    first = workbook.active
+    assert first is not None
+    first.title = "Z-先显示"
+    first.merge_cells("A1:C1")
+    first["A1"] = "RACK-Z"
+    _fill_descending_axis(first, 1, 2, 6)
+    _fill_descending_axis(first, 3, 2, 6)
+    second = workbook.create_sheet("A-后显示")
+    second.merge_cells("A1:C1")
+    second["A1"] = "RACK-A"
+    _fill_descending_axis(second, 1, 2, 6)
+    _fill_descending_axis(second, 3, 2, 6)
+    workbook.save(source)
+    session = GuiSession.open_workbook(source)
+
+    session.export_xlsx(output)
+
+    exported = load_workbook(output, read_only=False, data_only=False)
+    try:
+        diagram = exported["机柜图"]
+        group_rows = {
+            str(cell.value): cell.row
+            for row in diagram.iter_rows()
+            for cell in row
+            if str(cell.value).startswith("来源工作表：")
+        }
+        assert group_rows["来源工作表：Z-先显示"] < group_rows["来源工作表：A-后显示"]
+    finally:
+        exported.close()
+
+
+def test_export_draws_complete_borders_around_merged_titles_and_devices(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "layout.xlsx"
+    output = tmp_path / "bordered-export.xlsx"
+    _make_layout(source)
+    session = GuiSession.open_workbook(source)
+
+    session.export_xlsx(output)
+
+    workbook = load_workbook(output, read_only=False, data_only=False)
+    try:
+        diagram = workbook["机柜图"]
+
+        def merged_range_for(value: str):
+            return next(
+                merged
+                for merged in diagram.merged_cells.ranges
+                if diagram.cell(merged.min_row, merged.min_col).value == value
+            )
+
+        def assert_complete_medium_outline(value: str) -> None:
+            merged = merged_range_for(value)
+            for column in range(merged.min_col, merged.max_col + 1):
+                assert diagram.cell(merged.min_row, column).border.top.style == "medium"
+                assert diagram.cell(merged.max_row, column).border.bottom.style == "medium"
+            for row in range(merged.min_row, merged.max_row + 1):
+                assert diagram.cell(row, merged.min_col).border.left.style == "medium"
+                assert diagram.cell(row, merged.max_col).border.right.style == "medium"
+
+        assert_complete_medium_outline("RACK-A")
+        assert_complete_medium_outline("核心交换机\nS5735-L48T4XE\n带外管理")
     finally:
         workbook.close()
 

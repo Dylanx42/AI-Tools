@@ -231,11 +231,13 @@ def test_issue_entry_opens_grouped_chinese_exceptions(tmp_path: Path) -> None:
                 code="unresolved-u-axis",
                 severity="warning",
                 message="U axis at column 9 has no title",
+                evidence=["机柜!I2:I13"],
             ),
             IdentityConflict(
                 code="unresolved-u-axis",
                 severity="warning",
                 message="U axis at column 12 has no title",
+                evidence=["机柜!L2:L13"],
             ),
         ],
     )
@@ -249,7 +251,7 @@ def test_issue_entry_opens_grouped_chinese_exceptions(tmp_path: Path) -> None:
             cockpit.exception_table.horizontalHeaderItem(index).text()
             for index in range(cockpit.exception_table.columnCount())
         ]
-        assert headers == ["级别", "问题", "如何处理"]
+        assert headers == ["级别", "问题", "具体位置", "如何处理"]
         visible = " ".join(
             cockpit.exception_table.item(0, column).text()
             for column in range(cockpit.exception_table.columnCount())
@@ -258,6 +260,8 @@ def test_issue_entry_opens_grouped_chinese_exceptions(tmp_path: Path) -> None:
         assert "U axis" not in visible
         assert "重新扫描" in visible
         assert "2 处" in visible
+        assert "机柜 · I2:I13" in visible
+        assert "机柜 · L2:L13" in visible
         assert cockpit.exception_rescan_button.text() == "修正 Excel 后重新扫描"
         assert "unresolved-u-axis" in cockpit.exception_technical.toPlainText()
         assert cockpit.overview_issues.minimumHeight() >= 90
