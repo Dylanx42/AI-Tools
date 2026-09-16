@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from racktool.core.storage import default_project_database_path
 from racktool.gui.session import GuiSession
 from racktool.models.domain import Device
 from racktool.models.project import IdentityConflict
@@ -48,6 +50,89 @@ def test_session_lists_devices_racks_mappings_and_occupancy(tmp_path: Path) -> N
     occupancy = session.occupancy_rows(session.project.racks[0].rack_id)
     assert occupancy[0]["u"] == 12
     assert any(row["display_text"] == "设备 B" for row in occupancy)
+
+
+def test_default_project_state_does_not_create_excel_sidecars(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+
+    session = GuiSession.open_workbook(path)
+
+    assert session.database_path.is_file()
+    assert session.database_path.parent != path.parent
+    assert not path.with_suffix(".xlsx.sqlite").exists()
+    assert not list(path.parent.glob("layout.xlsx.sqlite.bak-*"))
+
+
+def test_open_migrates_legacy_sidecar_and_transaction_backups(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    legacy = path.with_suffix(".xlsx.sqlite")
+    _make_layout(path)
+    original = GuiSession.open_workbook(path, legacy)
+    legacy_backup = legacy.with_name(f"{legacy.name}.bak-old")
+    shutil.copy2(legacy, legacy_backup)
+
+    migrated = GuiSession.open_workbook(path)
+
+    assert migrated.project.to_dict() == original.project.to_dict()
+    assert migrated.database_path != legacy
+    assert migrated.database_path.is_file()
+    assert not legacy.exists()
+    assert not legacy_backup.exists()
+    transaction_root = migrated.database_path.parents[2] / "transactions"
+    assert not list(transaction_root.rglob("*.bak-*"))
+    assert "专用目录" in migrated.status_message
+
+
+def test_legacy_migration_refuses_divergent_project_state(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    legacy = path.with_suffix(".xlsx.sqlite")
+    _make_layout(path)
+    GuiSession.open_workbook(path, legacy)
+    managed = default_project_database_path(path)
+    GuiSession.open_workbook(path, managed)
+
+    with pytest.raises(ValueError, match="两份内容不同"):
+        GuiSession.open_workbook(path)
+
+    assert legacy.is_file()
+    assert managed.is_file()
+
+
+def test_legacy_cleanup_failure_keeps_both_valid_copies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    legacy = path.with_suffix(".xlsx.sqlite")
+    _make_layout(path)
+    original = GuiSession.open_workbook(path, legacy)
+    real_unlink = Path.unlink
+
+    def fail_only_legacy(candidate: Path, *args: object, **kwargs: object) -> None:
+        if candidate == legacy:
+            raise PermissionError("legacy file is busy")
+        real_unlink(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_only_legacy)
+
+    migrated = GuiSession.open_workbook(path)
+
+    assert migrated.project.to_dict() == original.project.to_dict()
+    assert migrated.database_path.is_file()
+    assert legacy.is_file()
+    assert "下次继续清理" in migrated.status_message
+
+
+def test_successful_rescan_does_not_leave_transaction_backup(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+
+    session.rescan()
+
+    transaction_root = session.database_path.parents[2] / "transactions"
+    assert not list(transaction_root.rglob("*.bak-*"))
 
 
 def test_session_preview_rejects_occupied_target(tmp_path: Path) -> None:

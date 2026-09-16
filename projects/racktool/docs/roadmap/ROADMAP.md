@@ -12,7 +12,7 @@
   移动抽屉、待同步队列和单一全局同步工作流；AUTOMATED PASS — RackCore + GuiSession +
   PySide6 headless。新版 macOS/Windows GUI 人工检查仍为 MANUAL VALIDATION PENDING，详见
   `docs/gates/V0.5.md`。
-- 当前整合证据见 `docs/gates/V0.5-integrated-audit.md`；2026-09-15 当前候选为 full 142 passed /
+- 当前整合证据见 `docs/gates/V0.5-integrated-audit.md`；2026-09-16 当前候选为 full 155 passed /
   0 skipped，P0/P1/P2 = 0。其他 focused 数量是重叠复跑子集，不得相加。
 - 一个真实私有机柜 workbook 内的两类不同 Sheet 布局已冻结 expected JSON、源文件 Hash 和持久
   验收记录；资产清单只作独立对账，不是第二个机柜布局 Golden。

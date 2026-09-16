@@ -770,6 +770,7 @@ def test_failed_temp_validation_leaves_original_file(
     result = apply_writeback(path, project, plan)
 
     assert result.status == "failed"
+    assert result.backup_path is None
     assert path.read_bytes() == original
 
 

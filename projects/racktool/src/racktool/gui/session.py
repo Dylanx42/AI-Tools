@@ -13,8 +13,14 @@ from racktool.core.service import (
     commit_write_plan,
     import_project,
     load_project_state,
+    prepare_default_project_database,
     rescan_project,
     restore_project_backup,
+)
+from racktool.core.storage import (
+    cleanup_application_storage,
+    default_project_database_path,
+    migrate_legacy_workbook_backups,
 )
 from racktool.core.sync import (
     MoveRequest,
@@ -67,7 +73,7 @@ def _bounds_overlap(
 
 
 def default_database_path(workbook: Path) -> Path:
-    return workbook.with_suffix(workbook.suffix + ".sqlite")
+    return default_project_database_path(workbook)
 
 
 @dataclass
@@ -86,21 +92,33 @@ class GuiSession:
     @classmethod
     def open_workbook(cls, workbook: Path, database: Path | None = None) -> GuiSession:
         workbook_path = normalize_path(workbook)
-        database_path = normalize_path(database or default_database_path(workbook_path))
+        migration_message: str | None = None
+        if database is None:
+            database_path, migration_message = prepare_default_project_database(workbook_path)
+        else:
+            database_path = normalize_path(database)
         if database_path.is_file():
             session = cls.open_project(database_path, workbook_path)
             session.status_message = "已打开已有项目"
+            if migration_message:
+                session.status_message += f"；{migration_message}"
             session.history.append(session.status_message)
             return session
         project = import_project(workbook_path, database_path)
         session = cls(
             workbook_path, database_path, project, status_message="已打开工作簿并创建项目"
         )
+        if migration_message:
+            session.status_message += f"；{migration_message}"
         session.history.append(session.status_message)
         return session
 
     @classmethod
     def open_project(cls, database: Path, workbook: Path | None = None) -> GuiSession:
+        try:
+            cleanup_application_storage()
+        except OSError:
+            pass
         database_path = normalize_path(database)
         project = load_project_state(database_path)
         workbook_path = Path(workbook or project.source_workbook or "").expanduser()
@@ -117,6 +135,10 @@ class GuiSession:
         bound_source = normalize_path(Path(project.source_workbook))
         if workbook_path != bound_source:
             raise ValueError("Selected workbook is not the source bound to this project")
+        try:
+            migrate_legacy_workbook_backups(workbook_path)
+        except OSError:
+            pass
         session = cls(workbook_path, database_path, project, status_message="已打开项目")
         session.history.append(session.status_message)
         return session
