@@ -17,6 +17,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.core.identity import normalize_path
+from racktool.core.ooxml import load_xlsx_workbook
 from racktool.core.project import project_error_conflicts
 from racktool.models.domain import Device, Placement, Rack
 from racktool.models.project import RackProject
@@ -36,13 +37,8 @@ _POSITION_HEADERS = (
     "设备 ID",
     "机柜 ID",
 )
-_RACKS_PER_BAND = 4
 _RACK_BLOCK_COLUMNS = 4
 _RACK_GUTTER_COLUMNS = 1
-_DIAGRAM_MAX_COLUMN = (
-    _RACKS_PER_BAND * (_RACK_BLOCK_COLUMNS + _RACK_GUTTER_COLUMNS)
-    - _RACK_GUTTER_COLUMNS
-)
 _FONT_NAME = "Arial"
 _DEVICE_FILLS = (
     "D9EAF7",
@@ -62,14 +58,6 @@ _GRID_BORDER = Border(
     top=_THIN_GRAY,
     bottom=_THIN_GRAY,
 )
-_DEVICE_BORDER = Border(
-    left=_MEDIUM_BLUE,
-    right=_MEDIUM_BLUE,
-    top=_MEDIUM_BLUE,
-    bottom=_MEDIUM_BLUE,
-)
-
-
 @dataclass(frozen=True, slots=True)
 class _PositionRow:
     device_id: str
@@ -90,6 +78,12 @@ class _PositionRow:
 class _ExportManifest:
     rack_titles: tuple[tuple[str, str], ...]
     position_rows: tuple[_PositionRow, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RackBand:
+    source_row: int
+    racks: tuple[Rack, ...]
 
 
 def _literal_text(cell: Cell, value: str) -> None:
@@ -129,9 +123,24 @@ def _normalise_destination(path: Path, project: RackProject) -> Path:
 
 
 def _ordered_racks(project: RackProject) -> list[Rack]:
-    sheet_order: dict[str, int] = {}
-    for rack in project.racks:
-        sheet_order.setdefault(rack.source_sheet or "", len(sheet_order))
+    source_sheets: list[str] = []
+    if project.source_workbook is not None:
+        source = normalize_path(Path(project.source_workbook))
+        if source.is_file():
+            try:
+                workbook = load_xlsx_workbook(source, read_only=True, data_only=False)
+                try:
+                    source_sheets = list(workbook.sheetnames)
+                finally:
+                    workbook.close()
+            except Exception:  # noqa: BLE001 - source order is an optional export hint
+                source_sheets = []
+    if not source_sheets:
+        source_sheets = sorted(
+            {rack.source_sheet or "" for rack in project.racks},
+            key=str.casefold,
+        )
+    sheet_order = {name: index for index, name in enumerate(source_sheets)}
     source_order = {rack.rack_id: index for index, rack in enumerate(project.racks)}
     return sorted(
         project.racks,
@@ -219,15 +228,88 @@ def _active_placements(project: RackProject) -> dict[str, list[tuple[Placement, 
     return by_rack
 
 
-def _style_diagram_header(sheet: Worksheet) -> None:
+def _rack_bands(racks: list[Rack]) -> list[_RackBand]:
+    source_order = {rack.rack_id: index for index, rack in enumerate(racks)}
+    grouped: dict[int, list[Rack]] = {}
+    for rack in racks:
+        source_row = (
+            rack.bounds.min_row
+            if rack.bounds is not None
+            else 10**9 + source_order[rack.rack_id]
+        )
+        grouped.setdefault(source_row, []).append(rack)
+    return [
+        _RackBand(
+            source_row,
+            tuple(
+                sorted(
+                    band,
+                    key=lambda rack: (
+                        rack.bounds.min_col if rack.bounds is not None else 10**9,
+                        source_order[rack.rack_id],
+                    ),
+                )
+            ),
+        )
+        for source_row, band in sorted(grouped.items())
+    ]
+
+
+def _diagram_column_count(rack_count: int) -> int:
+    if rack_count <= 0:
+        return 12
+    return max(
+        12,
+        rack_count * (_RACK_BLOCK_COLUMNS + _RACK_GUTTER_COLUMNS)
+        - _RACK_GUTTER_COLUMNS,
+    )
+
+
+def _configure_rack_columns(sheet: Worksheet, rack_count: int) -> None:
+    for block_index in range(rack_count):
+        start_column = block_index * (_RACK_BLOCK_COLUMNS + _RACK_GUTTER_COLUMNS) + 1
+        sheet.column_dimensions[get_column_letter(start_column)].width = 5
+        sheet.column_dimensions[get_column_letter(start_column + 1)].width = 15
+        sheet.column_dimensions[get_column_letter(start_column + 2)].width = 15
+        sheet.column_dimensions[get_column_letter(start_column + 3)].width = 5
+        if block_index < rack_count - 1:
+            sheet.column_dimensions[get_column_letter(start_column + 4)].width = 2
+
+
+def _set_outer_border(
+    sheet: Worksheet,
+    *,
+    min_row: int,
+    max_row: int,
+    min_column: int,
+    max_column: int,
+    side: Side,
+) -> None:
+    for row in range(min_row, max_row + 1):
+        for column in range(min_column, max_column + 1):
+            cell = sheet.cell(row, column)
+            cell.border = Border(
+                left=side if column == min_column else Side(),
+                right=side if column == max_column else Side(),
+                top=side if row == min_row else Side(),
+                bottom=side if row == max_row else Side(),
+            )
+
+
+def _style_diagram_header(sheet: Worksheet, max_column: int) -> None:
     _literal_text(sheet["A1"], _RACK_SHEET)
     sheet["A1"].font = Font(name=_FONT_NAME, size=16, bold=True, color="172033")
     _literal_text(
         sheet["A2"],
-        "按源工作表和源位置顺序排列；设备文字保留原换行；颜色仅用于区分设备。",
+        "每排机柜按源工作表中的行列位置排列；设备文字保留原换行；颜色仅用于区分设备。",
     )
     sheet["A2"].font = Font(name=_FONT_NAME, size=10, italic=True, color="667085")
-    sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=12)
+    sheet.merge_cells(
+        start_row=2,
+        start_column=1,
+        end_row=2,
+        end_column=min(max_column, 20),
+    )
     sheet.row_dimensions[1].height = 24
     sheet.row_dimensions[2].height = 20
 
@@ -252,7 +334,14 @@ def _style_rack_base(
     title.font = Font(name=_FONT_NAME, size=11, bold=True, color="172033")
     title.fill = PatternFill("solid", fgColor="F6C88F")
     title.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    title.border = _DEVICE_BORDER
+    _set_outer_border(
+        sheet,
+        min_row=title_row,
+        max_row=title_row,
+        min_column=start_column,
+        max_column=end_column,
+        side=_MEDIUM_BLUE,
+    )
     sheet.row_dimensions[title_row].height = max(
         float(sheet.row_dimensions[title_row].height or 0), 24.0
     )
@@ -309,7 +398,14 @@ def _render_rack_devices(
         text = _normalise_display_text(device.display_text)
         _literal_text(anchor, text)
         anchor.fill = _device_fill(device)
-        anchor.border = _DEVICE_BORDER
+        _set_outer_border(
+            sheet,
+            min_row=top_row,
+            max_row=bottom_row,
+            min_column=left_column,
+            max_column=right_column,
+            side=_MEDIUM_BLUE,
+        )
         anchor.font = Font(name=_FONT_NAME, size=8, color="172033")
         anchor.alignment = Alignment(
             horizontal="left",
@@ -335,22 +431,26 @@ def _write_rack_sheet(
     sheet.title = _RACK_SHEET
     sheet.sheet_view.showGridLines = False
     sheet.sheet_properties.tabColor = "4472C4"
-    _style_diagram_header(sheet)
-
-    for block_index in range(_RACKS_PER_BAND):
-        start_column = block_index * (_RACK_BLOCK_COLUMNS + _RACK_GUTTER_COLUMNS) + 1
-        sheet.column_dimensions[get_column_letter(start_column)].width = 5
-        sheet.column_dimensions[get_column_letter(start_column + 1)].width = 15
-        sheet.column_dimensions[get_column_letter(start_column + 2)].width = 15
-        sheet.column_dimensions[get_column_letter(start_column + 3)].width = 5
-        if block_index < _RACKS_PER_BAND - 1:
-            sheet.column_dimensions[get_column_letter(start_column + 4)].width = 2
 
     active_racks = [rack for rack in _ordered_racks(project) if rack.status == "active"]
     placements = _active_placements(project)
     groups: dict[str, list[Rack]] = {}
     for rack in active_racks:
         groups.setdefault(rack.source_sheet or "未命名工作表", []).append(rack)
+    bands_by_sheet = {
+        sheet_name: _rack_bands(racks) for sheet_name, racks in groups.items()
+    }
+    max_racks_in_band = max(
+        (
+            len(band.racks)
+            for bands in bands_by_sheet.values()
+            for band in bands
+        ),
+        default=0,
+    )
+    diagram_max_column = _diagram_column_count(max_racks_in_band)
+    _style_diagram_header(sheet, diagram_max_column)
+    _configure_rack_columns(sheet, max_racks_in_band)
 
     title_cells: list[tuple[str, str]] = []
     current_row = 4
@@ -359,12 +459,12 @@ def _write_rack_sheet(
         _literal_text(empty_cell, "当前项目没有可导出的在位机柜。")
         empty_cell.font = Font(name=_FONT_NAME, size=11, color="667085")
         current_row += 1
-    for sheet_name, racks in groups.items():
+    for sheet_name, bands in bands_by_sheet.items():
         sheet.merge_cells(
             start_row=current_row,
             start_column=1,
             end_row=current_row,
-            end_column=_DIAGRAM_MAX_COLUMN,
+            end_column=diagram_max_column,
         )
         group_cell = _cell(sheet, current_row, 1)
         _literal_text(group_cell, f"来源工作表：{sheet_name}")
@@ -375,8 +475,8 @@ def _write_rack_sheet(
         sheet.row_dimensions[current_row].height = 22
         current_row += 2
 
-        for batch_start in range(0, len(racks), _RACKS_PER_BAND):
-            batch = racks[batch_start : batch_start + _RACKS_PER_BAND]
+        for band in bands:
+            batch = list(band.racks)
             max_height = max(rack.height_u for rack in batch)
             title_row = current_row
             for block_index, rack in enumerate(batch):
@@ -402,7 +502,7 @@ def _write_rack_sheet(
 
     sheet.freeze_panes = "A4"
     sheet.print_area = (
-        f"A1:{get_column_letter(_DIAGRAM_MAX_COLUMN)}{max(current_row - 1, 4)}"
+        f"A1:{get_column_letter(diagram_max_column)}{max(current_row - 1, 4)}"
     )
     sheet.print_title_rows = "1:2"
     sheet.page_setup.orientation = "landscape"

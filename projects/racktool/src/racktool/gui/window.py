@@ -540,10 +540,13 @@ class CockpitWindow:
         action_row.addWidget(self.exception_rescan_button)
         action_row.addWidget(self.exception_help, 1)
         layout.addLayout(action_row)
-        self.exception_table = QtWidgets.QTableWidget(0, 3)
+        self.exception_table = QtWidgets.QTableWidget(0, 4)
         self.exception_table.setObjectName("exceptionTable")
-        self.exception_table.setHorizontalHeaderLabels(["级别", "问题", "如何处理"])
-        self._configure_table(self.exception_table, stretch_column=2)
+        self.exception_table.setHorizontalHeaderLabels(["级别", "问题", "具体位置", "如何处理"])
+        self._configure_table(self.exception_table, stretch_column=3)
+        self.exception_table.horizontalHeader().setSectionResizeMode(
+            2, self.QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
         self.exception_table.itemSelectionChanged.connect(self._on_exception_selected)
         layout.addWidget(self.exception_table, 1)
         self.exception_technical_toggle = QtWidgets.QPushButton("›  技术详情")
@@ -1053,6 +1056,7 @@ class CockpitWindow:
             values = [
                 str(row["level"]),
                 str(row["title"]),
+                str(row["location"]),
                 str(row["guidance"]),
             ]
             for column, value in enumerate(values):

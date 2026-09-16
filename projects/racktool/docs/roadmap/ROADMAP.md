@@ -12,7 +12,7 @@
   移动抽屉、待同步队列和单一全局同步工作流；AUTOMATED PASS — RackCore + GuiSession +
   PySide6 headless。新版 macOS/Windows GUI 人工检查仍为 MANUAL VALIDATION PENDING，详见
   `docs/gates/V0.5.md`。
-- 当前整合证据见 `docs/gates/V0.5-integrated-audit.md`；2026-09-16 当前候选为 full 155 passed /
+- 当前整合证据见 `docs/gates/V0.5-integrated-audit.md`；2026-09-16 当前候选为 full 159 passed /
   0 skipped，P0/P1/P2 = 0。其他 focused 数量是重叠复跑子集，不得相加。
 - 一个真实私有机柜 workbook 内的两类不同 Sheet 布局已冻结 expected JSON、源文件 Hash 和持久
   验收记录；资产清单只作独立对账，不是第二个机柜布局 Golden。
@@ -173,7 +173,9 @@
 - 查看单机柜可视化和设备详情；
 - 在移动抽屉中选择 Rack/U 并实时检查冲突；
 - 先加入待同步队列，再由单一全局入口安全写回。
-- 从顶部“导出表格”生成独立 Excel，包含标准机柜图和可筛选设备位置表；GUI 只调用 RackCore。
+- 异常页直接显示受影响的源工作表和单元格/范围，无法归属单格时明确标为项目级问题；
+- 从顶部“导出表格”生成独立 Excel，包含标准机柜图和可筛选设备位置表；机柜按源工作表的原始排和
+  列顺序布局，不按固定数量换行；GUI 只调用 RackCore。
 
 后续增强：
 

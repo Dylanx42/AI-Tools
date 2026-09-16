@@ -384,11 +384,13 @@ def test_issue_rows_group_similar_items_in_chinese(tmp_path: Path) -> None:
                 code="unresolved-u-axis",
                 severity="warning",
                 message="U axis at column 9 has no title",
+                evidence=["机柜!I2:I13"],
             ),
             IdentityConflict(
                 code="unresolved-u-axis",
                 severity="warning",
                 message="U axis at column 12 has no title",
+                evidence=["机柜!L2:L13"],
             ),
             IdentityConflict(
                 code="target-u-occupied",
@@ -407,6 +409,30 @@ def test_issue_rows_group_similar_items_in_chinese(tmp_path: Path) -> None:
     grouped = next(row for row in rows if "2 处" in row["title"])
     assert "unresolved-u-axis" in grouped["technical_detail"]
     assert "重新扫描" in grouped["guidance"]
+    assert grouped["location"] == "机柜 · I2:I13\n机柜 · L2:L13"
+
+
+def test_issue_rows_show_every_source_cell_in_one_analyzer_issue(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        conflicts=[
+            IdentityConflict(
+                code="duplicate-rack-title",
+                severity="warning",
+                message="Rack title appears in multiple candidate ranges",
+                evidence=["机柜!A1:C1", "机柜!E1:G1"],
+            )
+        ],
+    )
+
+    row = session.issue_rows()[0]
+
+    assert row["count"] == 2
+    assert row["locations"] == ["机柜 · A1:C1", "机柜 · E1:G1"]
+    assert "2 处" in row["title"]
 
 
 def test_overview_sheet_uses_readonly_scan_layout(tmp_path: Path) -> None:

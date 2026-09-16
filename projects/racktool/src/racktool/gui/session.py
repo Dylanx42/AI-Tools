@@ -350,6 +350,65 @@ class GuiSession:
         rows.extend(item.to_dict() for item in self.last_rescan_conflicts)
         return rows
 
+    def _issue_locations(self, row: dict[str, Any]) -> list[str]:
+        locations: list[str] = []
+
+        def add(sheet_name: str, source_range: str) -> None:
+            cleaned_range = source_range.replace("$", "").strip()
+            if not cleaned_range or _A1_PATTERN.fullmatch(cleaned_range) is None:
+                return
+            if sheet_name:
+                if cleaned_range in locations:
+                    locations.remove(cleaned_range)
+                label = f"{sheet_name} · {cleaned_range}"
+            else:
+                if any(item.endswith(f" · {cleaned_range}") for item in locations):
+                    return
+                label = cleaned_range
+            if label not in locations:
+                locations.append(label)
+
+        for evidence in row.get("evidence", []):
+            text = str(evidence).strip()
+            if "!" in text:
+                sheet_name, source_range = text.rsplit("!", 1)
+                add(sheet_name, source_range)
+            else:
+                add("", text)
+
+        mapping_by_id = {item.mapping_id: item for item in self.project.mappings}
+        mappings_by_device: dict[str, list[Any]] = {}
+        mappings_by_rack: dict[str, list[Any]] = {}
+        for mapping in self.project.mappings:
+            if mapping.device_id is not None:
+                mappings_by_device.setdefault(mapping.device_id, []).append(mapping)
+            if mapping.rack_id is not None:
+                mappings_by_rack.setdefault(mapping.rack_id, []).append(mapping)
+        rack_by_id = {item.rack_id: item for item in self.project.racks}
+        placement_by_id = {item.placement_id: item for item in self.project.placements}
+
+        identifiers = [
+            str(item)
+            for item in (*row.get("entity_ids", []), *row.get("candidate_refs", []))
+            if str(item)
+        ]
+        for identifier in identifiers:
+            resolved_mapping = mapping_by_id.get(identifier)
+            if resolved_mapping is not None:
+                add(resolved_mapping.sheet_name, resolved_mapping.source_range)
+            for device_mapping in mappings_by_device.get(identifier, []):
+                add(device_mapping.sheet_name, device_mapping.source_range)
+            for rack_mapping in mappings_by_rack.get(identifier, []):
+                add(rack_mapping.sheet_name, rack_mapping.source_range)
+            rack = rack_by_id.get(identifier)
+            if rack is not None and rack.source_sheet and rack.title_range:
+                add(rack.source_sheet, rack.title_range)
+            placement = placement_by_id.get(identifier)
+            if placement is not None:
+                for device_mapping in mappings_by_device.get(placement.device_id, []):
+                    add(device_mapping.sheet_name, device_mapping.source_range)
+        return locations
+
     def issue_rows(self) -> list[dict[str, Any]]:
         grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
         for row in self.conflict_rows():
@@ -365,15 +424,24 @@ class GuiSession:
                     "level": copy["level"],
                     "title": copy["title"],
                     "guidance": copy["guidance"],
-                    "count": 0,
+                    "item_count": 0,
+                    "locations": [],
                     "technical_details": [],
                 },
             )
-            group["count"] += 1
-            group["technical_details"].append(copy["technical_detail"])
+            group["item_count"] += 1
+            for location in self._issue_locations(row):
+                if location not in group["locations"]:
+                    group["locations"].append(location)
+            technical = copy["technical_detail"]
+            evidence = [str(item) for item in row.get("evidence", []) if str(item)]
+            if evidence:
+                technical += "\n来源位置: " + "；".join(evidence)
+            group["technical_details"].append(technical)
         rows = []
         for group in grouped.values():
-            count = int(group["count"])
+            locations = list(group["locations"])
+            count = len(locations) or int(group["item_count"])
             title = str(group["title"])
             if count > 1:
                 title = f"{title}（{count} 处）"
@@ -385,6 +453,12 @@ class GuiSession:
                     "title": title,
                     "guidance": group["guidance"],
                     "count": count,
+                    "locations": locations,
+                    "location": (
+                        "\n".join(locations)
+                        if locations
+                        else "项目级问题（没有单一单元格位置）"
+                    ),
                     "technical_detail": "\n".join(technical_details),
                 }
             )
