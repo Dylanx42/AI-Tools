@@ -9,7 +9,7 @@ from racktool.gui.presentation import (
     friendly_exception,
     friendly_status,
 )
-from racktool.gui.session import GuiSession, default_database_path
+from racktool.gui.session import GuiSession
 
 
 def _require_qt() -> tuple[Any, Any, Any]:
@@ -1522,9 +1522,7 @@ class CockpitWindow:
             return
         workbook = Path(path)
         try:
-            self.load_session(
-                GuiSession.open_workbook(workbook, default_database_path(workbook))
-            )
+            self.load_session(GuiSession.open_workbook(workbook))
         except Exception as error:  # noqa: BLE001
             self._show_error("无法打开工作簿", error)
 

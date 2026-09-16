@@ -32,7 +32,7 @@ Profile 只描述布局规则，不保存设备业务数据。错误、冲突或
 候选结果保留置信度和 evidence，**不等于人工确认的业务真值**。重复标题、错误名称、忽略标签、
 颜色语义和资产表对账仍需单独验证；synthetic fixture 也不构成真实格式兼容性的证据。
 
-当前完整套件为 142 passed；PySide6 headless 和真实私有工作簿副本的 macOS native launch 已完成。
+当前完整套件为 155 passed；PySide6 headless 和真实私有工作簿副本的 macOS native launch 已完成。
 新版 macOS GUI 用户验收、Windows GUI 检查，以及 Microsoft Excel/WPS 实机打开和写回仍为
 **MANUAL VALIDATION PENDING**，不能由自动化或启动成功替代。
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
@@ -59,6 +59,12 @@ racktool gui path/to/rack-layout.xlsx
 
 `racktool-gui` 和不带路径的 `racktool gui` 默认打开空项目，不会自动载入示例、测试或最近使用的
 工作簿；只有用户点击“打开…”或明确传入 `.xlsx` 路径后才读取数据。
+
+GUI 的项目数据库和 Safe Sync 恢复备份默认保存在操作系统的 RackTool 应用数据目录，不会在源
+Excel 旁边生成 `.sqlite`、`.sqlite.bak-*` 等实现文件。真实写回前的 Excel 恢复备份仍会保留，
+但每个工作簿最多 3 份、最长 30 天；数据库事务备份在成功或成功回滚后立即删除，异常中断残留
+最长保留 7 天。应用会在启动或打开项目时自动清理，无需后台常驻进程。旧版同目录项目文件会在
+下次打开对应工作簿时经过校验后迁移；内容冲突时不会自动覆盖。
 
 ## CLI
 

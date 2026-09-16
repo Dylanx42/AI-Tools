@@ -12,7 +12,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import range_boundaries
 from openpyxl.workbook import Workbook as OpenpyxlWorkbook
 
-from racktool.core.backup import create_backup, create_temp_copy
+from racktool.core.backup import create_backup, create_temp_copy, discard_backup
 from racktool.core.identity import normalize_path, sha256_file
 from racktool.core.ooxml import load_xlsx_workbook as load_workbook
 from racktool.core.project import (
@@ -1185,6 +1185,14 @@ def apply_writeback(
     except Exception as error:  # noqa: BLE001
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
+        if (
+            backup_path is not None
+            and source.is_file()
+            and project.workbook_fingerprint is not None
+            and sha256_file(source) == project.workbook_fingerprint
+            and discard_backup(backup_path)
+        ):
+            backup_path = None
         return WriteResult(
             status="failed",
             plan=plan,
