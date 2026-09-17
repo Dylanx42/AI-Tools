@@ -1,4 +1,5 @@
 from racktool.core.analyzer import analyze_workbook
+from racktool.core.export import export_project_workbook
 from racktool.core.project import import_workbook, rescan_workbook
 from racktool.core.service import (
     commit_write_plan,
@@ -7,17 +8,25 @@ from racktool.core.service import (
     rescan_project,
     restore_project_backup,
 )
-from racktool.core.sync import apply_writeback, plan_device_move
+from racktool.core.sync import (
+    MoveRequest,
+    apply_writeback,
+    plan_device_move,
+    plan_device_moves,
+)
 from racktool.core.workbook import scan_workbook
 
 __all__ = [
+    "MoveRequest",
     "analyze_workbook",
     "apply_writeback",
     "commit_write_plan",
+    "export_project_workbook",
     "import_project",
     "import_workbook",
     "load_project_state",
     "plan_device_move",
+    "plan_device_moves",
     "rescan_project",
     "rescan_workbook",
     "restore_project_backup",

@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from copy import copy
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 from zipfile import BadZipFile, ZipFile
 
-from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.cell import range_boundaries
 from openpyxl.workbook import Workbook as OpenpyxlWorkbook
 
-from racktool.core.backup import create_backup, create_temp_copy
+from racktool.core.backup import create_backup, create_temp_copy, discard_backup
 from racktool.core.identity import normalize_path, sha256_file
+from racktool.core.ooxml import load_xlsx_workbook as load_workbook
 from racktool.core.project import (
     _rescan_snapshot,
     project_error_conflicts,
@@ -37,6 +38,14 @@ class WriteAction:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class MoveRequest:
+    device_id: str
+    rack_id: str
+    start_u: int
+    end_u: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -729,6 +738,106 @@ def plan_device_move(
     return _plan(project, source, actions=(action,))
 
 
+def _deduplicate_conflicts(
+    conflicts: Sequence[IdentityConflict],
+) -> list[IdentityConflict]:
+    unique: list[IdentityConflict] = []
+    seen: set[tuple[object, ...]] = set()
+    for conflict in conflicts:
+        key = (
+            conflict.code,
+            conflict.severity,
+            conflict.message,
+            tuple(conflict.entity_ids),
+            tuple(conflict.candidate_refs),
+            tuple(conflict.evidence),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(conflict)
+    return unique
+
+
+def plan_device_moves(
+    project: RackProject,
+    moves: Sequence[MoveRequest],
+    *,
+    workbook_path: Path | None = None,
+) -> WritePlan:
+    """Build one conservative Safe Sync plan for independent device moves."""
+    source = (
+        normalize_path(workbook_path)
+        if workbook_path is not None
+        else (
+            normalize_path(Path(project.source_workbook))
+            if project.source_workbook is not None
+            else None
+        )
+    )
+    actions: list[WriteAction] = []
+    conflicts: list[IdentityConflict] = []
+    seen_devices: set[str] = set()
+    for move in moves:
+        if move.device_id in seen_devices:
+            conflicts.append(
+                _conflict(
+                    "duplicate-plan-device",
+                    "A write plan cannot move the same device more than once",
+                    entity_ids=[move.device_id],
+                )
+            )
+            continue
+        seen_devices.add(move.device_id)
+        planned = plan_device_move(
+            project,
+            move.device_id,
+            move.rack_id,
+            move.start_u,
+            move.end_u,
+            workbook_path=source,
+        )
+        conflicts.extend(planned.conflicts)
+        actions.extend(planned.actions)
+
+    for index, left in enumerate(actions):
+        for right in actions[index + 1 :]:
+            if left.rack_id == right.rack_id and set(
+                _u_range(left.start_u, left.end_u)
+            ).intersection(_u_range(right.start_u, right.end_u)):
+                conflicts.append(
+                    _conflict(
+                        "plan-target-overlap",
+                        "Two write actions target overlapping rack units",
+                        entity_ids=[left.device_id, right.device_id, left.rack_id],
+                    )
+                )
+            if left.sheet_name != right.sheet_name:
+                continue
+            left_ranges = (_bounds(left.old_range), _bounds(left.new_range))
+            right_ranges = (_bounds(right.old_range), _bounds(right.new_range))
+            if any(
+                _ranges_overlap(left_range, right_range)
+                for left_range in left_ranges
+                for right_range in right_ranges
+            ):
+                conflicts.append(
+                    _conflict(
+                        "plan-cell-range-overlap",
+                        "Two write actions touch overlapping workbook cells",
+                        entity_ids=[left.device_id, right.device_id],
+                        evidence=[left.sheet_name],
+                    )
+                )
+
+    return _plan(
+        project,
+        source,
+        actions=tuple(actions) if not conflicts else (),
+        conflicts=_deduplicate_conflicts(conflicts),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _CellSnapshot:
     value: Any
@@ -1076,6 +1185,14 @@ def apply_writeback(
     except Exception as error:  # noqa: BLE001
         if temp_path is not None and temp_path.exists():
             temp_path.unlink()
+        if (
+            backup_path is not None
+            and source.is_file()
+            and project.workbook_fingerprint is not None
+            and sha256_file(source) == project.workbook_fingerprint
+            and discard_backup(backup_path)
+        ):
+            backup_path = None
         return WriteResult(
             status="failed",
             plan=plan,

@@ -65,6 +65,10 @@ import racktool.core
 import racktool.core
 import racktool.profiles.apply
 """,
+    """
+import racktool.persistence as persistence
+assert all(hasattr(persistence, name) for name in persistence.__all__)
+""",
 )
 
 
