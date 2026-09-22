@@ -36,6 +36,7 @@ static NSError *QuotaError(QuotaErrorCode code, NSString *description) {
 @property(nonatomic, copy, nullable) NSString *planType;
 @property(nonatomic, copy, nullable) NSString *creditBalance;
 @property(nonatomic, strong, nullable) NSNumber *resetCreditCount;
+@property(nonatomic, copy, nullable) NSArray<NSDate *> *resetCreditExpiries;
 @property(nonatomic, strong) NSDate *updatedAt;
 @end
 
@@ -96,7 +97,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _secondaryName = @"7 天";
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，连续的长时间空档收成一段细间隔";
+        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，连续的长时间空档收成一段细间隔，空心圆标出额度窗口重新开始的位置";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
             ? [NSString stringWithFormat:@"%ld 条记录，短窗口 %@%%，长窗口 %@%%",
@@ -150,6 +151,27 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
     [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect positions:positions];
     [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
+    self.toolTip = [self resetTooltip];
+}
+
+- (NSString *)resetTooltip {
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    formatter.timeZone = NSTimeZone.localTimeZone;
+    formatter.dateFormat = @"M/d HH:mm";
+    NSMutableArray<NSString *> *lines = [NSMutableArray array];
+    for (NSUInteger index = 1; index < self.points.count; index++) {
+        QuotaHistoryPoint *previous = self.points[index - 1];
+        QuotaHistoryPoint *current = self.points[index];
+        NSMutableArray<NSString *> *windows = [NSMutableArray array];
+        if ([self isWindowResetFrom:previous to:current primary:YES]) [windows addObject:self.primaryName];
+        if ([self isWindowResetFrom:previous to:current primary:NO]) [windows addObject:self.secondaryName];
+        if (windows.count == 0) continue;
+        [lines addObject:[NSString stringWithFormat:@"%@ 重置 · %@",
+                          [windows componentsJoinedByString:@"、"],
+                          [formatter stringFromDate:current.recordedAt]]];
+    }
+    return lines.count ? [lines componentsJoinedByString:@"\n"] : @"这段记录里没有检测到额度窗口重置";
 }
 
 - (NSArray<NSNumber *> *)displayPositionsForChartWidth:(CGFloat)width {
@@ -323,6 +345,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     line.lineJoinStyle = NSLineJoinStyleRound;
     NSBezierPath *area = [NSBezierPath bezierPath];
     NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
+    NSMutableArray<NSValue *> *resetStarts = [NSMutableArray array];
     BOOL penDown = NO;
     BOOL areaOpen = NO;
     NSPoint segmentStart = NSZeroPoint;
@@ -357,6 +380,9 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
             segmentStart = displayPoint;
             penDown = YES;
             areaOpen = YES;
+            if (breaksBefore && [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
+                [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
+            }
         } else {
             [line lineToPoint:displayPoint];
             [area lineToPoint:displayPoint];
@@ -392,6 +418,15 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         }
         [color setFill];
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - radius, endPoint.y - radius, radius * 2, radius * 2)] fill];
+    }
+    for (NSValue *resetStart in resetStarts) {
+        NSPoint start = resetStart.pointValue;
+        [[NSColor.windowBackgroundColor colorWithAlphaComponent:0.95] setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 3.5, start.y - 3.5, 7, 7)] fill];
+        [color setStroke];
+        NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 2.5, start.y - 2.5, 5, 5)];
+        ring.lineWidth = 1.25;
+        [ring stroke];
     }
 }
 
@@ -574,6 +609,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [self addSubview:trend];
 
     NSMutableArray<NSString *> *details = [NSMutableArray array];
+    NSString *resetCreditTip = nil;
     if (snapshot.creditBalance.length) {
         NSDecimalNumber *balance = [NSDecimalNumber decimalNumberWithString:snapshot.creditBalance];
         NSNumberFormatter *formatter = [NSNumberFormatter new];
@@ -582,12 +618,33 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         NSString *value = [balance isEqual:NSDecimalNumber.notANumber] ? snapshot.creditBalance : [formatter stringFromNumber:balance];
         [details addObject:[NSString stringWithFormat:@"Credits %@", value]];
     }
-    if (snapshot.resetCreditCount) [details addObject:[NSString stringWithFormat:@"重置券 %@", snapshot.resetCreditCount]];
+    if (snapshot.resetCreditCount) {
+        NSDateFormatter *expiryFormatter = [NSDateFormatter new];
+        expiryFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+        expiryFormatter.dateFormat = @"M/d HH:mm";
+        NSMutableArray<NSString *> *expiries = [NSMutableArray array];
+        for (NSDate *expiry in snapshot.resetCreditExpiries) {
+            [expiries addObject:[expiryFormatter stringFromDate:expiry]];
+        }
+        NSString *creditText = [NSString stringWithFormat:@"重置券 %@", snapshot.resetCreditCount];
+        NSString *creditTip = nil;
+        if (expiries.count == 1) {
+            creditText = [creditText stringByAppendingFormat:@" · %@ 到期", expiries.firstObject];
+        } else if (expiries.count > 1) {
+            creditText = [creditText stringByAppendingFormat:@" · 最近 %@ 到期", expiries.firstObject];
+            creditTip = [NSString stringWithFormat:@"重置券到期：%@", [expiries componentsJoinedByString:@"、"]];
+            if (snapshot.resetCreditCount.integerValue > (NSInteger)expiries.count) {
+                creditTip = [creditTip stringByAppendingString:@"；其余券未返回到期时间"];
+            }
+        }
+        [details addObject:creditText];
+        resetCreditTip = creditTip;
+    }
     _footerY = 435;
     if (details.count) {
         NSTextField *detailLabel = QuotaLabel(self, [details componentsJoinedByString:@"   ·   "],
                                              NSMakeRect(16, 433, 336, 17), 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
-        detailLabel.toolTip = detailLabel.stringValue;
+        detailLabel.toolTip = resetCreditTip ?: detailLabel.stringValue;
         _footerY = 459;
         [self setFrameSize:NSMakeSize(368, 486)];
     }
@@ -880,8 +937,26 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     snapshot.planType = [bucket[@"planType"] isKindOfClass:NSString.class] ? bucket[@"planType"] : nil;
     snapshot.creditBalance = [credits[@"balance"] isKindOfClass:NSString.class] ? credits[@"balance"] : nil;
     snapshot.resetCreditCount = [resetCredits[@"availableCount"] isKindOfClass:NSNumber.class] ? resetCredits[@"availableCount"] : nil;
+    snapshot.resetCreditExpiries = [self resetCreditExpiries:resetCredits[@"credits"]];
     snapshot.updatedAt = [NSDate date];
     return snapshot;
+}
+
+- (NSArray<NSDate *> *)resetCreditExpiries:(id)value {
+    // The service may omit the detail rows or cap them. A count without rows is
+    // still valid; only known, future-or-present expiry timestamps are displayed.
+    if (![value isKindOfClass:NSArray.class]) return @[];
+    NSMutableArray<NSDate *> *expiries = [NSMutableArray array];
+    for (id credit in (NSArray *)value) {
+        if (![credit isKindOfClass:NSDictionary.class]) continue;
+        id timestamp = credit[@"expiresAt"];
+        if (![timestamp isKindOfClass:NSNumber.class] || [timestamp doubleValue] <= 0) continue;
+        [expiries addObject:[NSDate dateWithTimeIntervalSince1970:[timestamp doubleValue]]];
+    }
+    [expiries sortUsingComparator:^NSComparisonResult(NSDate *left, NSDate *right) {
+        return [left compare:right];
+    }];
+    return expiries;
 }
 
 - (nullable QuotaWindow *)parseWindow:(id)value {
@@ -1112,7 +1187,16 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     if ([self window:snapshot.secondary differsFrom:previous.secondary]) return YES;
     if (![self nullableString:snapshot.planType equals:previous.planType]) return YES;
     if (![self nullableString:snapshot.creditBalance equals:previous.creditBalance]) return YES;
-    return ![snapshot.resetCreditCount isEqualToNumber:previous.resetCreditCount];
+    if (![snapshot.resetCreditCount isEqualToNumber:previous.resetCreditCount]) return YES;
+    return ![self dates:snapshot.resetCreditExpiries equal:previous.resetCreditExpiries];
+}
+
+- (BOOL)dates:(nullable NSArray<NSDate *> *)dates equal:(nullable NSArray<NSDate *> *)previous {
+    if (dates.count != previous.count) return NO;
+    for (NSUInteger index = 0; index < dates.count; index++) {
+        if (fabs([dates[index] timeIntervalSinceDate:previous[index]]) > 1) return NO;
+    }
+    return YES;
 }
 
 - (BOOL)window:(nullable QuotaWindow *)window differsFrom:(nullable QuotaWindow *)previous {
