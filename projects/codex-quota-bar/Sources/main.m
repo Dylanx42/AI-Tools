@@ -85,7 +85,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
 - (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
                totalRecordCount:(NSInteger)totalRecordCount {
-    self = [super initWithFrame:NSMakeRect(0, 0, 336, 188)];
+    self = [super initWithFrame:NSMakeRect(0, 0, 368, 168)];
     if (self) {
         _points = [points copy];
         _totalRecordCount = totalRecordCount;
@@ -114,32 +114,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
 
-    NSDictionary *titleAttributes = @{
-        NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
-        NSForegroundColorAttributeName: NSColor.labelColor
-    };
     NSDictionary *secondaryAttributes = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightRegular],
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightMedium],
         NSForegroundColorAttributeName: NSColor.secondaryLabelColor
     };
-
-    [@"额度趋势" drawAtPoint:NSMakePoint(0, 0) withAttributes:titleAttributes];
-    NSString *countText = [NSString stringWithFormat:@"最近 %lu 条变化", (unsigned long)self.points.count];
-    NSSize countSize = [countText sizeWithAttributes:secondaryAttributes];
-    [countText drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width, 2)
-            withAttributes:secondaryAttributes];
-
-    QuotaHistoryPoint *latest = self.points.lastObject;
-    NSString *primaryText = latest.primaryRemainingPercent
-        ? [NSString stringWithFormat:@"%@  %@%%", self.primaryName, latest.primaryRemainingPercent]
-        : [self.primaryName stringByAppendingString:@"  —"];
-    NSString *secondaryText = latest.secondaryRemainingPercent
-        ? [NSString stringWithFormat:@"%@  %@%%", self.secondaryName, latest.secondaryRemainingPercent]
-        : [self.secondaryName stringByAppendingString:@"  —"];
-    CGFloat legendX = [self drawLegendAtX:0 y:26 color:NSColor.systemBlueColor text:primaryText];
-    [self drawLegendAtX:legendX + 22 y:26 color:NSColor.systemPurpleColor text:secondaryText];
-
-    NSRect chartRect = NSMakeRect(31, 54, NSWidth(self.bounds) - 36, 98);
+    NSRect chartRect = NSMakeRect(30, 8, NSWidth(self.bounds) - 34, 132);
     [self drawGridInRect:chartRect labelAttributes:secondaryAttributes];
 
     if (self.points.count == 0) {
@@ -148,8 +127,8 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     }
 
     NSArray<NSNumber *> *positions = [self displayPositionsForChartWidth:NSWidth(chartRect)];
-    [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
     [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect positions:positions];
+    [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
     [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
     self.toolTip = [self resetTooltip];
 }
@@ -270,32 +249,19 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     }
 }
 
-- (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text {
-    [color setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(x, y + 5, 12, 3) xRadius:1.5 yRadius:1.5] fill];
-    NSDictionary *attributes = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
-    };
-    [text drawAtPoint:NSMakePoint(x + 18, y) withAttributes:attributes];
-    return x + 18 + [text sizeWithAttributes:attributes].width;
-}
-
 - (void)drawGridInRect:(NSRect)chartRect labelAttributes:(NSDictionary *)labelAttributes {
     for (NSNumber *level in @[@100, @50, @0]) {
         CGFloat y = NSMinY(chartRect) + (100.0 - level.doubleValue) / 100.0 * NSHeight(chartRect);
         NSString *label = [NSString stringWithFormat:@"%@%%", level];
         NSSize size = [label sizeWithAttributes:labelAttributes];
-        [label drawAtPoint:NSMakePoint(NSMinX(chartRect) - size.width - 6, y - size.height / 2)
+        [label drawAtPoint:NSMakePoint(NSMinX(chartRect) - size.width - 8, y - size.height / 2.0)
             withAttributes:labelAttributes];
-
+        if (level.integerValue == 0) continue;
         NSBezierPath *gridLine = [NSBezierPath bezierPath];
         [gridLine moveToPoint:NSMakePoint(NSMinX(chartRect), y)];
         [gridLine lineToPoint:NSMakePoint(NSMaxX(chartRect), y)];
-        gridLine.lineWidth = 0.5;
-        CGFloat dashes[] = {2, 3};
-        [gridLine setLineDash:dashes count:2 phase:0];
-        [[NSColor.labelColor colorWithAlphaComponent:0.12] setStroke];
+        gridLine.lineWidth = 1;
+        [[NSColor.labelColor colorWithAlphaComponent:0.07] setStroke];
         [gridLine stroke];
     }
 }
@@ -340,15 +306,12 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 positions:(NSArray<NSNumber *> *)positions {
     NSIndexSet *gapBreaks = [self gapBreakIndexes];
     NSBezierPath *line = [NSBezierPath bezierPath];
-    line.lineWidth = 2.15;
+    line.lineWidth = 2.4;
     line.lineCapStyle = NSLineCapStyleRound;
     line.lineJoinStyle = NSLineJoinStyleRound;
-    NSBezierPath *area = [NSBezierPath bezierPath];
     NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
     NSMutableArray<NSValue *> *resetStarts = [NSMutableArray array];
     BOOL penDown = NO;
-    BOOL areaOpen = NO;
-    NSPoint segmentStart = NSZeroPoint;
     NSPoint previousPoint = NSZeroPoint;
 
     for (NSUInteger index = 0; index < self.points.count; index++) {
@@ -360,13 +323,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
         }
         if (!value || breaksBefore) {
-            if (areaOpen) {
-                [area lineToPoint:NSMakePoint(previousPoint.x, NSMaxY(chartRect))];
-                [area lineToPoint:NSMakePoint(segmentStart.x, NSMaxY(chartRect))];
-                [area closePath];
-                [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
-                areaOpen = NO;
-            }
+            if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
             penDown = NO;
         }
         if (!value) continue;
@@ -376,56 +333,40 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                                            NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect));
         if (!penDown) {
             [line moveToPoint:displayPoint];
-            [area moveToPoint:displayPoint];
-            segmentStart = displayPoint;
             penDown = YES;
-            areaOpen = YES;
             if (breaksBefore && [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
                 [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
             }
         } else {
             [line lineToPoint:displayPoint];
-            [area lineToPoint:displayPoint];
         }
         previousPoint = displayPoint;
     }
-    if (areaOpen) {
-        [area lineToPoint:NSMakePoint(previousPoint.x, NSMaxY(chartRect))];
-        [area lineToPoint:NSMakePoint(segmentStart.x, NSMaxY(chartRect))];
-        [area closePath];
-        [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
-    }
-
-    if (area.isEmpty) return;
-    NSGradient *gradient = [[NSGradient alloc] initWithStartingColor:[color colorWithAlphaComponent:0.16]
-                                                       endingColor:[color colorWithAlphaComponent:0.01]];
-    [NSGraphicsContext saveGraphicsState];
-    [area addClip];
-    [gradient drawInRect:chartRect angle:90];
-    [NSGraphicsContext restoreGraphicsState];
+    if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
+    if (line.isEmpty) return;
+    [[color colorWithAlphaComponent:0.16] setStroke];
+    NSBezierPath *halo = [line copy];
+    halo.lineWidth = 6;
+    [halo stroke];
     [color setStroke];
     [line stroke];
 
     for (NSValue *segmentEnd in segmentEnds) {
         NSPoint endPoint = segmentEnd.pointValue;
         BOOL latest = NSEqualPoints(endPoint, previousPoint);
-        CGFloat radius = latest ? 2.5 : 1.75;
-        if (latest) {
-            [[color colorWithAlphaComponent:0.14] setFill];
-            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
-            [NSColor.windowBackgroundColor setFill];
-            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 3.5, endPoint.y - 3.5, 7, 7)] fill];
-        }
+        if (!latest) continue;
+        [NSColor.windowBackgroundColor setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
         [color setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - radius, endPoint.y - radius, radius * 2, radius * 2)] fill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 3, endPoint.y - 3, 6, 6)] fill];
     }
     for (NSValue *resetStart in resetStarts) {
         NSPoint start = resetStart.pointValue;
-        [[NSColor.windowBackgroundColor colorWithAlphaComponent:0.95] setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 3.5, start.y - 3.5, 7, 7)] fill];
+        [NSColor.windowBackgroundColor setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 5, start.y - 5, 10, 10)] fill];
         [color setStroke];
-        NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 2.5, start.y - 2.5, 5, 5)];
-        ring.lineWidth = 1.25;
+        NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 3.5, start.y - 3.5, 7, 7)];
+        ring.lineWidth = 1.7;
         [ring stroke];
     }
 }
@@ -436,7 +377,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     if (self.points.count == 1) {
         NSString *dateText = [self.axisDateFormatter stringFromDate:self.points.firstObject.recordedAt];
         NSSize dateSize = [dateText sizeWithAttributes:attributes];
-        [dateText drawAtPoint:NSMakePoint(NSMidX(chartRect) - dateSize.width / 2, NSMaxY(chartRect) + 7)
+        [dateText drawAtPoint:NSMakePoint(NSMidX(chartRect) - dateSize.width / 2, NSMaxY(chartRect) + 8)
                withAttributes:attributes];
         [self drawCenteredText:@"已记录起点，等待额度变化"
                        inRect:NSMakeRect(NSMinX(chartRect), NSMidY(chartRect) - 7, NSWidth(chartRect), 14)
@@ -468,7 +409,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         CGFloat x = [label[@"x"] doubleValue];
         CGFloat width = [label[@"width"] doubleValue];
         if (x < cursor + 8) continue;
-        [label[@"text"] drawAtPoint:NSMakePoint(x, NSMaxY(chartRect) + 7) withAttributes:attributes];
+        [label[@"text"] drawAtPoint:NSMakePoint(x, NSMaxY(chartRect) + 8) withAttributes:attributes];
         cursor = x + width;
     }
 }
@@ -509,64 +450,57 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @interface QuotaCardView : NSView
 @property(nonatomic, strong) QuotaWindow *quotaWindow;
 @property(nonatomic, strong) NSColor *accent;
-- (instancetype)initWithWindow:(QuotaWindow *)window name:(NSString *)name
-                         color:(NSColor *)color frame:(NSRect)frame;
+- (instancetype)initWithWindow:(QuotaWindow *)window
+                          name:(NSString *)name
+                         color:(NSColor *)color
+                         frame:(NSRect)frame
+                         first:(BOOL)first;
 @end
 
 @implementation QuotaCardView
 - (BOOL)isFlipped { return YES; }
 
-- (instancetype)initWithWindow:(QuotaWindow *)window name:(NSString *)name
-                         color:(NSColor *)color frame:(NSRect)frame {
+- (instancetype)initWithWindow:(QuotaWindow *)window
+                          name:(NSString *)name
+                         color:(NSColor *)color
+                         frame:(NSRect)frame
+                         first:(BOOL)first {
     self = [super initWithFrame:frame];
     if (!self) return nil;
     _quotaWindow = window;
     _accent = color;
-    CGFloat width = NSWidth(frame);
-    QuotaLabel(self, name, NSMakeRect(25, 12, width - 37, 18), 12, NSFontWeightMedium, NSColor.labelColor);
-
-    NSString *value = window ? [NSString stringWithFormat:@"%ld", (long)window.remainingPercent] : @"—";
-    NSFont *numberFont = [NSFont monospacedDigitSystemFontOfSize:34 weight:NSFontWeightSemibold];
-    NSTextField *number = QuotaLabel(self, value, NSMakeRect(12, 35, width - 24, 44), 34,
-                                   NSFontWeightSemibold, NSColor.labelColor);
-    number.font = numberFont;
-    if (window) {
-        CGFloat numberWidth = [value sizeWithAttributes:@{NSFontAttributeName:numberFont}].width;
-        QuotaLabel(self, @"%", NSMakeRect(14 + numberWidth, 51, 22, 23), 16,
-                   NSFontWeightMedium, NSColor.secondaryLabelColor);
-    }
-    NSString *used = window ? [NSString stringWithFormat:@"剩余 · 已用 %ld%%", (long)window.usedPercent] : @"窗口暂不可用";
-    QuotaLabel(self, used, NSMakeRect(12, 79, width - 24, 16), 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
+    NSTextField *nameLabel = QuotaLabel(self, name, NSMakeRect(0, 0, 150, 18),
+                                        13, NSFontWeightSemibold, NSColor.secondaryLabelColor);
+    NSString *value = window ? [NSString stringWithFormat:@"%ld%%", (long)window.remainingPercent] : @"—";
+    NSTextField *number = QuotaLabel(self, value, NSMakeRect(150, -6, NSWidth(frame) - 150, 44), 36,
+                                   NSFontWeightBold, window ? NSColor.labelColor : NSColor.tertiaryLabelColor);
+    number.font = [NSFont monospacedDigitSystemFontOfSize:36 weight:NSFontWeightBold];
+    number.alignment = NSTextAlignmentRight;
     NSDateFormatter *formatter = [NSDateFormatter new];
     formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
     formatter.dateFormat = @"M/d HH:mm";
-    NSString *reset = window.resetsAt ? [NSString stringWithFormat:@"%@ 重置", [formatter stringFromDate:window.resetsAt]] : @"等待额度数据";
-    QuotaLabel(self, reset, NSMakeRect(12, 116, width - 24, 17), 10.5, NSFontWeightRegular, NSColor.secondaryLabelColor);
+    NSString *reset = window.resetsAt
+        ? [NSString stringWithFormat:@"%@ 重置 · 已用 %ld%%", [formatter stringFromDate:window.resetsAt], (long)window.usedPercent]
+        : @"窗口暂不可用";
+    QuotaLabel(self, reset, NSMakeRect(0, 38, NSWidth(frame), 16),
+               11, NSFontWeightRegular, NSColor.secondaryLabelColor);
     self.toolTip = reset;
+    self.accessibilityLabel = [NSString stringWithFormat:@"%@ 剩余 %@%%，%@", name, value, reset];
     return self;
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
-    NSBezierPath *card = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:12 yRadius:12];
-    [[NSColor.labelColor colorWithAlphaComponent:0.035] setFill];
-    [card fill];
-    [[NSColor.labelColor colorWithAlphaComponent:0.065] setStroke];
-    card.lineWidth = 0.5;
-    [card stroke];
-    [self.accent setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(13, 17, 6, 6)] fill];
-
-    NSRect track = NSMakeRect(12, 102, NSWidth(self.bounds) - 24, 5);
-    [[self.accent colorWithAlphaComponent:0.12] setFill];
+    if (!self.quotaWindow) return;
+    NSColor *fill = self.quotaWindow.remainingPercent <= 10 ? NSColor.systemRedColor :
+                    self.quotaWindow.remainingPercent <= 20 ? NSColor.systemOrangeColor : self.accent;
+    NSRect track = NSMakeRect(0, 64, NSWidth(self.bounds), 5);
+    [[fill colorWithAlphaComponent:0.12] setFill];
     [[NSBezierPath bezierPathWithRoundedRect:track xRadius:2.5 yRadius:2.5] fill];
-    if (self.quotaWindow.remainingPercent > 0) {
-        NSColor *fill = self.quotaWindow.remainingPercent <= 10 ? NSColor.systemRedColor :
-                        self.quotaWindow.remainingPercent <= 20 ? NSColor.systemOrangeColor : self.accent;
-        [fill setFill];
-        track.size.width *= self.quotaWindow.remainingPercent / 100.0;
-        [[NSBezierPath bezierPathWithRoundedRect:track xRadius:2.5 yRadius:2.5] fill];
-    }
+    if (self.quotaWindow.remainingPercent <= 0) return;
+    track.size.width *= self.quotaWindow.remainingPercent / 100.0;
+    [fill setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:track xRadius:2.5 yRadius:2.5] fill];
 }
 @end
 
@@ -583,27 +517,31 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
                      recordCount:(NSInteger)count loading:(BOOL)loading error:(NSError *)error {
-    self = [super initWithFrame:NSMakeRect(0, 0, 368, 462)];
+    self = [super initWithFrame:NSMakeRect(0, 0, 400, 404)];
     if (!self) return nil;
-    QuotaLabel(self, @"Codex", NSMakeRect(16, 12, 190, 25), 18, NSFontWeightSemibold, NSColor.labelColor);
-    QuotaLabel(self, @"额度概览", NSMakeRect(17, 36, 180, 16), 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
+    QuotaLabel(self, @"Codex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
     if (snapshot.planType.length) {
         NSString *planName = snapshot.planType.uppercaseString;
-        _planBadgeWidth = MIN(115, [planName sizeWithAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:11 weight:NSFontWeightMedium]}].width + 20);
-        NSTextField *plan = QuotaLabel(self, planName, NSMakeRect(356 - _planBadgeWidth, 22, _planBadgeWidth - 8, 17),
-                                       11, NSFontWeightMedium, NSColor.secondaryLabelColor);
+        _planBadgeWidth = MIN(96, [planName sizeWithAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:10 weight:NSFontWeightSemibold]}].width + 16);
+        NSTextField *plan = QuotaLabel(self, planName, NSMakeRect(370 - _planBadgeWidth, 20, _planBadgeWidth, 16),
+                                       11, NSFontWeightSemibold, NSColor.secondaryLabelColor);
+        plan.font = [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold];
         plan.alignment = NSTextAlignmentCenter;
         plan.toolTip = [NSString stringWithFormat:@"当前套餐：%@", snapshot.planType];
     }
     [self addSubview:[[QuotaCardView alloc] initWithWindow:snapshot.primary
                                                    name:QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口")
-                                                  color:NSColor.systemBlueColor frame:NSMakeRect(16, 66, 163, 142)]];
+                                                  color:NSColor.systemBlueColor
+                                                  frame:NSMakeRect(22, 58, 356, 78)
+                                                 first:YES]];
     [self addSubview:[[QuotaCardView alloc] initWithWindow:snapshot.secondary
                                                    name:QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口")
-                                                  color:NSColor.systemPurpleColor frame:NSMakeRect(189, 66, 163, 142)]];
+                                                  color:NSColor.systemPurpleColor
+                                                  frame:NSMakeRect(22, 154, 356, 78)
+                                                 first:NO]];
 
     QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points totalRecordCount:count];
-    trend.frame = NSMakeRect(16, 228, 336, 188);
+    trend.frame = NSMakeRect(16, 248, 368, 168);
     trend.primaryName = QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口");
     trend.secondaryName = QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口");
     [self addSubview:trend];
@@ -640,13 +578,13 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         [details addObject:creditText];
         resetCreditTip = creditTip;
     }
-    _footerY = 435;
+    _footerY = 428;
     if (details.count) {
-        NSTextField *detailLabel = QuotaLabel(self, [details componentsJoinedByString:@"   ·   "],
-                                             NSMakeRect(16, 433, 336, 17), 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
+        NSTextField *detailLabel = QuotaLabel(self, [details componentsJoinedByString:@"    "],
+                                             NSMakeRect(22, 424, 356, 16), 11, NSFontWeightMedium, NSColor.secondaryLabelColor);
         detailLabel.toolTip = resetCreditTip ?: detailLabel.stringValue;
-        _footerY = 459;
-        [self setFrameSize:NSMakeSize(368, 486)];
+        _footerY = 450;
+        [self setFrameSize:NSMakeSize(400, 474)];
     }
     NSDateFormatter *updated = [NSDateFormatter new];
     updated.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
@@ -655,17 +593,18 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         snapshot ? [NSString stringWithFormat:@"%@ 更新", [updated stringFromDate:snapshot.updatedAt]] : @"等待额度数据";
     _statusColor = loading ? NSColor.systemBlueColor : error ? NSColor.systemOrangeColor :
                    snapshot ? NSColor.systemGreenColor : NSColor.tertiaryLabelColor;
-    NSTextField *statusLabel = QuotaLabel(self, status, NSMakeRect(29, _footerY, 280, 17), 10.5,
+    NSTextField *statusLabel = QuotaLabel(self, status, NSMakeRect(34, _footerY, 378, 16), 11,
                                          NSFontWeightRegular, NSColor.secondaryLabelColor);
+    statusLabel.frame = NSMakeRect(36, _footerY, 342, 16);
     statusLabel.toolTip = error.localizedDescription ?: status;
     if (error) {
         NSTextField *errorLabel = QuotaLabel(self, error.localizedDescription,
-                                            NSMakeRect(16, _footerY + 23, 336, 32), 10.5,
+                                            NSMakeRect(22, _footerY + 22, 356, 32), 11,
                                             NSFontWeightRegular, NSColor.secondaryLabelColor);
         errorLabel.maximumNumberOfLines = 2;
         errorLabel.cell.wraps = YES;
         errorLabel.toolTip = error.localizedDescription;
-        [self setFrameSize:NSMakeSize(368, _footerY + 62)];
+        [self setFrameSize:NSMakeSize(400, _footerY + 60)];
     }
     self.toolTip = error.localizedDescription;
     return self;
@@ -674,14 +613,12 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 - (void)drawRect:(NSRect)dirtyRect {
     [super drawRect:dirtyRect];
     if (self.planBadgeWidth > 0) {
-        [[NSColor.labelColor colorWithAlphaComponent:0.05] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(352 - self.planBadgeWidth, 18, self.planBadgeWidth, 24)
-                                        xRadius:7 yRadius:7] fill];
+        [[NSColor.labelColor colorWithAlphaComponent:0.06] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:NSMakeRect(366 - self.planBadgeWidth, 17, self.planBadgeWidth + 8, 22)
+                                        xRadius:10 yRadius:10] fill];
     }
-    [[NSColor.labelColor colorWithAlphaComponent:0.08] setFill];
-    NSRectFillUsingOperation(NSMakeRect(16, 424, 336, 0.5), NSCompositingOperationSourceOver);
     [self.statusColor setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(18, self.footerY + 5, 5, 5)] fill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(22, self.footerY + 5, 6, 6)] fill];
 }
 @end
 
