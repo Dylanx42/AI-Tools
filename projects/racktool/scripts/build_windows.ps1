@@ -24,6 +24,6 @@ if (-not (Test-Path "dist/RackTool/RackTool.exe")) {
 }
 
 Copy-Item "README.md" "dist/RackTool/README.md"
-Copy-Item "scripts/windows-quick-start.txt" "dist/RackTool/使用说明.txt"
+Copy-Item "scripts/windows-quick-start.txt" "dist/RackTool/QUICK_START.txt"
 
 Write-Host "Windows portable build is ready: dist/RackTool/RackTool.exe"
