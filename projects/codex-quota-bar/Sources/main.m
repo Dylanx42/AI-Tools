@@ -46,6 +46,8 @@ static NSError *QuotaError(QuotaErrorCode code, NSString *description) {
 @property(nonatomic, strong) NSDate *recordedAt;
 @property(nonatomic, strong, nullable) NSNumber *primaryRemainingPercent;
 @property(nonatomic, strong, nullable) NSNumber *secondaryRemainingPercent;
+@property(nonatomic, strong, nullable) NSDate *primaryResetsAt;
+@property(nonatomic, strong, nullable) NSDate *secondaryResetsAt;
 @end
 
 @implementation QuotaHistoryPoint
@@ -94,7 +96,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _secondaryName = @"7 天";
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比";
+        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，长时间空档会单独标出";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
             ? [NSString stringWithFormat:@"%ld 条记录，短窗口 %@%%，长窗口 %@%%",
@@ -121,7 +123,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     };
 
     [@"额度趋势" drawAtPoint:NSMakePoint(0, 0) withAttributes:titleAttributes];
-    NSString *countText = [NSString stringWithFormat:@"最近 %lu 条记录", (unsigned long)self.points.count];
+    NSString *countText = [NSString stringWithFormat:@"最近 %lu 条变化", (unsigned long)self.points.count];
     NSSize countSize = [countText sizeWithAttributes:secondaryAttributes];
     [countText drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width, 2)
             withAttributes:secondaryAttributes];
@@ -144,28 +146,96 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         return;
     }
 
-    NSDate *firstDate = self.points.firstObject.recordedAt;
-    NSDate *lastDate = self.points.lastObject.recordedAt;
-    [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect firstDate:firstDate lastDate:lastDate];
-    [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect firstDate:firstDate lastDate:lastDate];
+    NSArray<NSNumber *> *positions = [self displayPositionsForChartWidth:NSWidth(chartRect)];
+    [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
+    [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect positions:positions];
+    [self drawGapMarkersInRect:chartRect positions:positions attributes:secondaryAttributes];
+    [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
+}
 
-    if (self.points.count == 1) {
-        [self drawCenteredText:@"已记录起点，等待额度变化"
-                       inRect:NSMakeRect(NSMinX(chartRect), NSMidY(chartRect) - 7, NSWidth(chartRect), 14)
-                   attributes:secondaryAttributes];
-        NSString *dateText = [self.axisDateFormatter stringFromDate:firstDate];
-        NSSize dateSize = [dateText sizeWithAttributes:secondaryAttributes];
-        [dateText drawAtPoint:NSMakePoint(NSMidX(chartRect) - dateSize.width / 2, NSMaxY(chartRect) + 7)
-               withAttributes:secondaryAttributes];
-    } else {
-        NSString *firstText = [self.axisDateFormatter stringFromDate:firstDate];
-        NSString *lastText = [self.axisDateFormatter stringFromDate:lastDate];
-        [firstText drawAtPoint:NSMakePoint(NSMinX(chartRect), NSMaxY(chartRect) + 7)
-                withAttributes:secondaryAttributes];
-        NSSize lastSize = [lastText sizeWithAttributes:secondaryAttributes];
-        [lastText drawAtPoint:NSMakePoint(NSMaxX(chartRect) - lastSize.width, NSMaxY(chartRect) + 7)
-               withAttributes:secondaryAttributes];
+- (NSArray<NSNumber *> *)displayPositionsForChartWidth:(CGFloat)width {
+    NSUInteger count = self.points.count;
+    NSMutableArray<NSNumber *> *positions = [NSMutableArray arrayWithCapacity:count];
+    if (count == 0) return positions;
+    if (count == 1) {
+        [positions addObject:@(width / 2.0)];
+        return positions;
     }
+
+    // Real clock time lets a few overnight gaps consume the axis and crush every
+    // decline into a vertical stroke. A gap is a session break; its lane stays narrow.
+    // Active width follows how far the quota actually moved, so a one-point twitch
+    // does not take the same room as a long decline.
+    const NSTimeInterval gapThreshold = 3.0 * 60.0 * 60.0;
+    const CGFloat gapLane = 9.0;
+    NSMutableArray<NSDictionary *> *runs = [NSMutableArray array];
+    NSMutableDictionary *current = nil;
+    for (NSUInteger index = 1; index < count; index++) {
+        NSTimeInterval delta = [self.points[index].recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
+        BOOL gap = delta > gapThreshold;
+        if (!current || [current[@"gap"] boolValue] != gap) {
+            current = [@{@"gap": @(gap),
+                         @"steps": @1,
+                         @"swing": @([self quotaSwingFrom:self.points[index - 1] to:self.points[index]]),
+                         @"start": @(index - 1),
+                         @"end": @(index)} mutableCopy];
+            [runs addObject:current];
+        } else {
+            current[@"steps"] = @([current[@"steps"] unsignedIntegerValue] + 1);
+            current[@"swing"] = @([current[@"swing"] doubleValue] +
+                                  [self quotaSwingFrom:self.points[index - 1] to:self.points[index]]);
+            current[@"end"] = @(index);
+        }
+    }
+
+    NSUInteger gapCount = 0;
+    CGFloat activeWeight = 0;
+    for (NSMutableDictionary *run in runs) {
+        if ([run[@"gap"] boolValue]) {
+            gapCount += 1;
+            run[@"weight"] = @0;
+        } else {
+            NSUInteger steps = [run[@"steps"] unsignedIntegerValue];
+            CGFloat swing = [run[@"swing"] doubleValue];
+            CGFloat weight = MAX(0.55, sqrt(MAX(swing, 0)) * (0.85 + 0.15 * log2((CGFloat)steps + 1.0)));
+            run[@"weight"] = @(weight);
+            activeWeight += weight;
+        }
+    }
+
+    CGFloat gapBudget = MIN(width * 0.28, gapLane * gapCount);
+    CGFloat activeBudget = MAX(0, width - gapBudget);
+    CGFloat lane = gapCount > 0 ? gapBudget / gapCount : 0;
+
+    CGFloat cursor = 0;
+    NSMutableArray<NSNumber *> *edges = [NSMutableArray arrayWithObject:@0];
+    for (NSMutableDictionary *run in runs) {
+        CGFloat runWidth = [run[@"gap"] boolValue]
+            ? lane
+            : (activeWeight > 0 ? [run[@"weight"] doubleValue] / activeWeight * activeBudget : 0);
+        cursor += runWidth;
+        [edges addObject:@(MIN(width, cursor))];
+        run[@"width"] = @(runWidth);
+    }
+    edges[edges.count - 1] = @(width);
+
+    [positions addObject:@0];
+    NSUInteger edgeIndex = 1;
+    for (NSDictionary *run in runs) {
+        NSUInteger startIndex = [run[@"start"] unsignedIntegerValue];
+        NSUInteger endIndex = [run[@"end"] unsignedIntegerValue];
+        CGFloat left = edges[edgeIndex - 1].doubleValue;
+        CGFloat right = edges[edgeIndex].doubleValue;
+        NSUInteger steps = endIndex - startIndex;
+        for (NSUInteger step = 1; step <= steps; step++) {
+            CGFloat x = steps > 0 ? left + (CGFloat)step / (CGFloat)steps * (right - left) : right;
+            [positions addObject:@(MIN(width, x))];
+        }
+        edgeIndex += 1;
+    }
+    while (positions.count < count) [positions addObject:@(width)];
+    positions[count - 1] = @(width);
+    return positions;
 }
 
 - (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text {
@@ -198,59 +268,203 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     }
 }
 
+- (BOOL)isWindowResetFrom:(QuotaHistoryPoint *)previous to:(QuotaHistoryPoint *)current primary:(BOOL)primary {
+    // Reset timestamps drift forward on every refresh. Only a large jump, paired
+    // with the remaining quota returning to the top of the window, is a new period.
+    NSDate *before = primary ? previous.primaryResetsAt : previous.secondaryResetsAt;
+    NSDate *after = primary ? current.primaryResetsAt : current.secondaryResetsAt;
+    NSNumber *beforeValue = primary ? previous.primaryRemainingPercent : previous.secondaryRemainingPercent;
+    NSNumber *afterValue = primary ? current.primaryRemainingPercent : current.secondaryRemainingPercent;
+    if (!before || !after || !beforeValue || !afterValue) return NO;
+    BOOL resetMoved = [after timeIntervalSinceDate:before] > 30 * 60;
+    BOOL quotaRestarted = beforeValue.doubleValue <= 25.0 && afterValue.doubleValue >= 80.0;
+    return resetMoved && quotaRestarted;
+}
+
+- (CGFloat)quotaSwingFrom:(QuotaHistoryPoint *)previous to:(QuotaHistoryPoint *)current {
+    CGFloat swing = 0;
+    if (previous.primaryRemainingPercent && current.primaryRemainingPercent) {
+        swing = fabs(current.primaryRemainingPercent.doubleValue - previous.primaryRemainingPercent.doubleValue);
+    }
+    if (previous.secondaryRemainingPercent && current.secondaryRemainingPercent) {
+        swing = MAX(swing, fabs(current.secondaryRemainingPercent.doubleValue - previous.secondaryRemainingPercent.doubleValue));
+    }
+    return swing;
+}
+
 - (void)drawSeriesPrimary:(BOOL)primary
                     color:(NSColor *)color
                    inRect:(NSRect)chartRect
-                firstDate:(NSDate *)firstDate
-                 lastDate:(NSDate *)lastDate {
-    NSTimeInterval span = [lastDate timeIntervalSinceDate:firstDate];
-    NSMutableArray<NSValue *> *displayPoints = [NSMutableArray array];
-
-    for (QuotaHistoryPoint *point in self.points) {
-        NSNumber *value = primary ? point.primaryRemainingPercent : point.secondaryRemainingPercent;
-        if (!value) continue;
-        CGFloat x = span > 0
-            ? NSMinX(chartRect) + [point.recordedAt timeIntervalSinceDate:firstDate] / span * NSWidth(chartRect)
-            : NSMidX(chartRect);
-        CGFloat clampedValue = MAX(0.0, MIN(100.0, value.doubleValue));
-        CGFloat y = NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect);
-        [displayPoints addObject:[NSValue valueWithPoint:NSMakePoint(x, y)]];
-    }
-
-    if (displayPoints.count == 0) return;
+                positions:(NSArray<NSNumber *> *)positions {
+    const NSTimeInterval gapThreshold = 3.0 * 60.0 * 60.0;
     NSBezierPath *line = [NSBezierPath bezierPath];
-    line.lineWidth = 2.25;
+    line.lineWidth = 2.15;
     line.lineCapStyle = NSLineCapStyleRound;
     line.lineJoinStyle = NSLineJoinStyleRound;
-    [line moveToPoint:displayPoints.firstObject.pointValue];
-    for (NSUInteger index = 1; index < displayPoints.count; index++) {
-        [line lineToPoint:displayPoints[index].pointValue];
+    NSBezierPath *area = [NSBezierPath bezierPath];
+    BOOL penDown = NO;
+    BOOL areaOpen = NO;
+    NSPoint segmentStart = NSZeroPoint;
+    NSPoint previousPoint = NSZeroPoint;
+
+    for (NSUInteger index = 0; index < self.points.count; index++) {
+        QuotaHistoryPoint *point = self.points[index];
+        NSNumber *value = primary ? point.primaryRemainingPercent : point.secondaryRemainingPercent;
+        BOOL breaksBefore = NO;
+        if (index > 0) {
+            NSTimeInterval delta = [point.recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
+            breaksBefore = delta > gapThreshold || [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
+        }
+        if (!value || breaksBefore) {
+            if (areaOpen) {
+                [area lineToPoint:NSMakePoint(previousPoint.x, NSMaxY(chartRect))];
+                [area lineToPoint:NSMakePoint(segmentStart.x, NSMaxY(chartRect))];
+                [area closePath];
+                areaOpen = NO;
+            }
+            penDown = NO;
+        }
+        if (!value) continue;
+
+        CGFloat clampedValue = MAX(0.0, MIN(100.0, value.doubleValue));
+        NSPoint displayPoint = NSMakePoint(NSMinX(chartRect) + positions[index].doubleValue,
+                                           NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect));
+        if (!penDown) {
+            [line moveToPoint:displayPoint];
+            [area moveToPoint:displayPoint];
+            segmentStart = displayPoint;
+            penDown = YES;
+            areaOpen = YES;
+        } else {
+            [line lineToPoint:displayPoint];
+            [area lineToPoint:displayPoint];
+        }
+        previousPoint = displayPoint;
+    }
+    if (areaOpen) {
+        [area lineToPoint:NSMakePoint(previousPoint.x, NSMaxY(chartRect))];
+        [area lineToPoint:NSMakePoint(segmentStart.x, NSMaxY(chartRect))];
+        [area closePath];
     }
 
-    if (displayPoints.count > 1) {
-        NSBezierPath *area = [line copy];
-        [area lineToPoint:NSMakePoint(displayPoints.lastObject.pointValue.x, NSMaxY(chartRect))];
-        [area lineToPoint:NSMakePoint(displayPoints.firstObject.pointValue.x, NSMaxY(chartRect))];
-        [area closePath];
-        NSGradient *gradient = [[NSGradient alloc] initWithStartingColor:[color colorWithAlphaComponent:0.12]
-                                                           endingColor:[color colorWithAlphaComponent:0.01]];
-        [NSGraphicsContext saveGraphicsState];
-        [area addClip];
-        [gradient drawInRect:chartRect angle:90];
-        [NSGraphicsContext restoreGraphicsState];
-    }
+    if (area.isEmpty) return;
+    NSGradient *gradient = [[NSGradient alloc] initWithStartingColor:[color colorWithAlphaComponent:0.16]
+                                                       endingColor:[color colorWithAlphaComponent:0.01]];
+    [NSGraphicsContext saveGraphicsState];
+    [area addClip];
+    [gradient drawInRect:chartRect angle:90];
+    [NSGraphicsContext restoreGraphicsState];
     [color setStroke];
     [line stroke];
 
-    for (NSUInteger index = 0; index < displayPoints.count; index++) {
-        if (index + 1 != displayPoints.count) continue;
-        NSPoint point = displayPoints[index].pointValue;
-        [[color colorWithAlphaComponent:0.14] setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(point.x - 5, point.y - 5, 10, 10)] fill];
-        [NSColor.windowBackgroundColor setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(point.x - 3.5, point.y - 3.5, 7, 7)] fill];
-        [color setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(point.x - 2.5, point.y - 2.5, 5, 5)] fill];
+    NSPoint endPoint = previousPoint;
+    [[color colorWithAlphaComponent:0.14] setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
+    [NSColor.windowBackgroundColor setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 3.5, endPoint.y - 3.5, 7, 7)] fill];
+    [color setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 2.5, endPoint.y - 2.5, 5, 5)] fill];
+}
+
+- (void)drawGapMarkersInRect:(NSRect)chartRect
+                    positions:(NSArray<NSNumber *> *)positions
+                   attributes:(NSDictionary *)attributes {
+    NSDictionary *gapAttributes = @{
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.tertiaryLabelColor
+    };
+    NSMutableArray<NSDictionary *> *badges = [NSMutableArray array];
+    for (NSUInteger index = 1; index < self.points.count; index++) {
+        NSTimeInterval delta = [self.points[index].recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
+        if (delta < 6 * 60 * 60) continue;
+        CGFloat left = NSMinX(chartRect) + positions[index - 1].doubleValue;
+        CGFloat right = NSMinX(chartRect) + positions[index].doubleValue;
+        CGFloat midX = (left + right) / 2.0;
+        NSBezierPath *marker = [NSBezierPath bezierPath];
+        [marker moveToPoint:NSMakePoint(midX, NSMinY(chartRect))];
+        [marker lineToPoint:NSMakePoint(midX, NSMaxY(chartRect))];
+        marker.lineWidth = 1;
+        CGFloat dashes[] = {1.5, 3};
+        [marker setLineDash:dashes count:2 phase:0];
+        [[NSColor.tertiaryLabelColor colorWithAlphaComponent:0.55] setStroke];
+        [marker stroke];
+
+        NSString *label = [self compactDuration:delta];
+        NSSize size = [label sizeWithAttributes:gapAttributes];
+        [badges addObject:@{@"text": label, @"mid": @(midX), @"width": @(size.width), @"height": @(size.height)}];
+    }
+
+    // Overnight breaks sit next to each other. Alternate the badge vertically
+    // when two labels would occupy the same horizontal range.
+    CGFloat previousRight = -CGFLOAT_MAX;
+    BOOL upper = YES;
+    for (NSDictionary *badgeInfo in badges) {
+        CGFloat midX = [badgeInfo[@"mid"] doubleValue];
+        CGFloat textWidth = [badgeInfo[@"width"] doubleValue];
+        CGFloat textHeight = [badgeInfo[@"height"] doubleValue];
+        CGFloat badgeWidth = textWidth + 8;
+        CGFloat badgeX = MAX(NSMinX(chartRect), MIN(midX - badgeWidth / 2.0, NSMaxX(chartRect) - badgeWidth));
+        if (badgeX < previousRight + 3) upper = !upper;
+        else upper = YES;
+        CGFloat badgeY = upper ? NSMinY(chartRect) + 8 : NSMaxY(chartRect) - 24;
+        NSRect badge = NSMakeRect(badgeX, badgeY, badgeWidth, 16);
+        [[NSColor.windowBackgroundColor colorWithAlphaComponent:0.92] setFill];
+        [[NSBezierPath bezierPathWithRoundedRect:badge xRadius:4 yRadius:4] fill];
+        [badgeInfo[@"text"] drawAtPoint:NSMakePoint(NSMidX(badge) - textWidth / 2, NSMidY(badge) - textHeight / 2)
+            withAttributes:gapAttributes];
+        previousRight = NSMaxX(badge);
+        (void)attributes;
+    }
+}
+
+- (NSString *)compactDuration:(NSTimeInterval)interval {
+    NSInteger minutes = (NSInteger)llround(MAX(0, interval) / 60.0);
+    if (minutes >= 48 * 60) return [NSString stringWithFormat:@"空 %ld 天", (long)((minutes + 12 * 60) / (24 * 60))];
+    if (minutes >= 90) return [NSString stringWithFormat:@"空 %ld 小时", (long)((minutes + 30) / 60)];
+    return [NSString stringWithFormat:@"空 %ld 分钟", (long)minutes];
+}
+
+- (void)drawAxisInRect:(NSRect)chartRect
+              positions:(NSArray<NSNumber *> *)positions
+             attributes:(NSDictionary *)attributes {
+    if (self.points.count == 1) {
+        NSString *dateText = [self.axisDateFormatter stringFromDate:self.points.firstObject.recordedAt];
+        NSSize dateSize = [dateText sizeWithAttributes:attributes];
+        [dateText drawAtPoint:NSMakePoint(NSMidX(chartRect) - dateSize.width / 2, NSMaxY(chartRect) + 7)
+               withAttributes:attributes];
+        [self drawCenteredText:@"已记录起点，等待额度变化"
+                       inRect:NSMakeRect(NSMinX(chartRect), NSMidY(chartRect) - 7, NSWidth(chartRect), 14)
+                   attributes:attributes];
+        return;
+    }
+
+    // Gap durations are drawn on the plot. Repeating a timestamp on both sides of
+    // every overnight break stacks labels into one unreadable band, so the axis
+    // only names the start and end of the visible span.
+    NSMutableIndexSet *indexes = [NSMutableIndexSet indexSet];
+    [indexes addIndex:0];
+    [indexes addIndex:self.points.count - 1];
+
+    NSMutableArray<NSDictionary *> *labels = [NSMutableArray array];
+    [indexes enumerateIndexesUsingBlock:^(NSUInteger index, BOOL *stop) {
+        NSString *text = [self.axisDateFormatter stringFromDate:self.points[index].recordedAt];
+        CGFloat center = NSMinX(chartRect) + positions[index].doubleValue;
+        CGFloat width = [text sizeWithAttributes:attributes].width;
+        BOOL startAligned = index == 0;
+        BOOL endAligned = index + 1 == self.points.count;
+        CGFloat x = startAligned ? NSMinX(chartRect) : endAligned ? NSMaxX(chartRect) - width : center - width / 2;
+        x = MAX(NSMinX(chartRect), MIN(x, NSMaxX(chartRect) - width));
+        [labels addObject:@{@"text": text, @"x": @(x), @"width": @(width)}];
+        (void)stop;
+    }];
+
+    CGFloat cursor = -CGFLOAT_MAX;
+    for (NSDictionary *label in labels) {
+        CGFloat x = [label[@"x"] doubleValue];
+        CGFloat width = [label[@"width"] doubleValue];
+        if (x < cursor + 8) continue;
+        [label[@"text"] drawAtPoint:NSMakePoint(x, NSMaxY(chartRect) + 7) withAttributes:attributes];
+        cursor = x + width;
     }
 }
 
@@ -994,13 +1208,35 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
             QuotaHistoryPoint *point = [QuotaHistoryPoint new];
             point.recordedAt = recordedAt;
             if (columns[2].length > 0) point.primaryRemainingPercent = @(columns[2].integerValue);
+            if (columns[4].length > 0) point.primaryResetsAt = [self.historyDateFormatter dateFromString:columns[4]];
             if (columns[6].length > 0) point.secondaryRemainingPercent = @(columns[6].integerValue);
-            [self.historyPoints addObject:point];
-            if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
+            if (columns[8].length > 0) point.secondaryResetsAt = [self.historyDateFormatter dateFromString:columns[8]];
+            [self appendChartPoint:point];
         }
         self.lastHistorySignature = signature;
         self.historyRecordCount += 1;
     }
+}
+
+- (void)appendChartPoint:(QuotaHistoryPoint *)point {
+    // Reset timestamps drift forward on every refresh while the remaining quota
+    // stays unchanged. The chart only needs the samples where a percentage moves.
+    QuotaHistoryPoint *previous = self.historyPoints.lastObject;
+    BOOL sameQuota = previous &&
+        [self chartNumber:previous.primaryRemainingPercent equals:point.primaryRemainingPercent] &&
+        [self chartNumber:previous.secondaryRemainingPercent equals:point.secondaryRemainingPercent];
+    if (sameQuota) {
+        previous.recordedAt = point.recordedAt;
+        previous.primaryResetsAt = point.primaryResetsAt;
+        previous.secondaryResetsAt = point.secondaryResetsAt;
+        return;
+    }
+    [self.historyPoints addObject:point];
+    if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
+}
+
+- (BOOL)chartNumber:(nullable NSNumber *)value equals:(nullable NSNumber *)other {
+    return value == other || [value isEqualToNumber:other];
 }
 
 - (NSArray<NSString *> *)historyFieldsForWindow:(nullable QuotaWindow *)window {
@@ -1044,10 +1280,15 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     self.historyRecordCount += 1;
     QuotaHistoryPoint *point = [QuotaHistoryPoint new];
     point.recordedAt = snapshot.updatedAt;
-    if (snapshot.primary) point.primaryRemainingPercent = @(snapshot.primary.remainingPercent);
-    if (snapshot.secondary) point.secondaryRemainingPercent = @(snapshot.secondary.remainingPercent);
-    [self.historyPoints addObject:point];
-    if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
+    if (snapshot.primary) {
+        point.primaryRemainingPercent = @(snapshot.primary.remainingPercent);
+        point.primaryResetsAt = snapshot.primary.resetsAt;
+    }
+    if (snapshot.secondary) {
+        point.secondaryRemainingPercent = @(snapshot.secondary.remainingPercent);
+        point.secondaryResetsAt = snapshot.secondary.resetsAt;
+    }
+    [self appendChartPoint:point];
 }
 
 - (void)updateStatusDisplay {
