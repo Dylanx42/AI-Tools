@@ -96,7 +96,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _secondaryName = @"7 天";
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，长时间空档会单独标出";
+        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，连续的长时间空档收成一段细间隔";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
             ? [NSString stringWithFormat:@"%ld 条记录，短窗口 %@%%，长窗口 %@%%",
@@ -138,7 +138,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     CGFloat legendX = [self drawLegendAtX:0 y:26 color:NSColor.systemBlueColor text:primaryText];
     [self drawLegendAtX:legendX + 22 y:26 color:NSColor.systemPurpleColor text:secondaryText];
 
-    NSRect chartRect = NSMakeRect(31, 59, NSWidth(self.bounds) - 36, 102);
+    NSRect chartRect = NSMakeRect(31, 54, NSWidth(self.bounds) - 36, 98);
     [self drawGridInRect:chartRect labelAttributes:secondaryAttributes];
 
     if (self.points.count == 0) {
@@ -149,7 +149,6 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     NSArray<NSNumber *> *positions = [self displayPositionsForChartWidth:NSWidth(chartRect)];
     [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
     [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect positions:positions];
-    [self drawGapMarkersInRect:chartRect positions:positions attributes:secondaryAttributes];
     [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
 }
 
@@ -162,31 +161,10 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         return positions;
     }
 
-    // Real clock time lets a few overnight gaps consume the axis and crush every
-    // decline into a vertical stroke. A gap is a session break; its lane stays narrow.
-    // Active width follows how far the quota actually moved, so a one-point twitch
-    // does not take the same room as a long decline.
-    const NSTimeInterval gapThreshold = 3.0 * 60.0 * 60.0;
-    const CGFloat gapLane = 9.0;
-    NSMutableArray<NSDictionary *> *runs = [NSMutableArray array];
-    NSMutableDictionary *current = nil;
-    for (NSUInteger index = 1; index < count; index++) {
-        NSTimeInterval delta = [self.points[index].recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
-        BOOL gap = delta > gapThreshold;
-        if (!current || [current[@"gap"] boolValue] != gap) {
-            current = [@{@"gap": @(gap),
-                         @"steps": @1,
-                         @"swing": @([self quotaSwingFrom:self.points[index - 1] to:self.points[index]]),
-                         @"start": @(index - 1),
-                         @"end": @(index)} mutableCopy];
-            [runs addObject:current];
-        } else {
-            current[@"steps"] = @([current[@"steps"] unsignedIntegerValue] + 1);
-            current[@"swing"] = @([current[@"swing"] doubleValue] +
-                                  [self quotaSwingFrom:self.points[index - 1] to:self.points[index]]);
-            current[@"end"] = @(index);
-        }
-    }
+    // Real clock time lets overnight gaps consume the axis. Each merged idle stretch
+    // becomes one narrow break. Active width follows how far the quota actually moved.
+    const CGFloat gapLane = 10.0;
+    NSMutableArray<NSMutableDictionary *> *runs = [[self layoutRuns] mutableCopy];
 
     NSUInteger gapCount = 0;
     CGFloat activeWeight = 0;
@@ -203,7 +181,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         }
     }
 
-    CGFloat gapBudget = MIN(width * 0.28, gapLane * gapCount);
+    CGFloat gapBudget = MIN(width * 0.12, gapLane * gapCount);
     CGFloat activeBudget = MAX(0, width - gapBudget);
     CGFloat lane = gapCount > 0 ? gapBudget / gapCount : 0;
 
@@ -236,6 +214,38 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     while (positions.count < count) [positions addObject:@(width)];
     positions[count - 1] = @(width);
     return positions;
+}
+
+- (void)absorbQuietRunsBetweenGaps:(NSMutableArray<NSMutableDictionary *> *)runs {
+    // A flat 3-point twitch trapped between two overnight breaks is not a usage
+    // session. Fold it into the surrounding gap so the chart keeps one marker
+    // instead of a row of overlapping labels.
+    BOOL changed = YES;
+    while (changed) {
+        changed = NO;
+        for (NSUInteger index = 1; index + 1 < runs.count; index++) {
+            NSMutableDictionary *run = runs[index];
+            NSMutableDictionary *before = runs[index - 1];
+            NSMutableDictionary *after = runs[index + 1];
+            BOOL quietBridge = ![run[@"gap"] boolValue] &&
+                [before[@"gap"] boolValue] &&
+                [after[@"gap"] boolValue] &&
+                [run[@"swing"] doubleValue] < 12.0 &&
+                [run[@"span"] doubleValue] < 8.0 * 60.0 * 60.0;
+            if (!quietBridge) continue;
+            before[@"end"] = after[@"end"];
+            before[@"steps"] = @([before[@"steps"] unsignedIntegerValue] +
+                                 [run[@"steps"] unsignedIntegerValue] +
+                                 [after[@"steps"] unsignedIntegerValue]);
+            before[@"span"] = @([before[@"span"] doubleValue] +
+                                [run[@"span"] doubleValue] +
+                                [after[@"span"] doubleValue]);
+            [runs removeObjectAtIndex:index];
+            [runs removeObjectAtIndex:index];
+            changed = YES;
+            break;
+        }
+    }
 }
 
 - (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text {
@@ -292,16 +302,27 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     return swing;
 }
 
+ - (NSIndexSet *)gapBreakIndexes {
+    NSMutableIndexSet *breaks = [NSMutableIndexSet indexSet];
+    for (NSDictionary *run in [self layoutRuns]) {
+        if (![run[@"gap"] boolValue]) continue;
+        NSUInteger end = [run[@"end"] unsignedIntegerValue];
+        if (end > [run[@"start"] unsignedIntegerValue]) [breaks addIndex:end];
+    }
+    return breaks;
+}
+
 - (void)drawSeriesPrimary:(BOOL)primary
                     color:(NSColor *)color
                    inRect:(NSRect)chartRect
                 positions:(NSArray<NSNumber *> *)positions {
-    const NSTimeInterval gapThreshold = 3.0 * 60.0 * 60.0;
+    NSIndexSet *gapBreaks = [self gapBreakIndexes];
     NSBezierPath *line = [NSBezierPath bezierPath];
     line.lineWidth = 2.15;
     line.lineCapStyle = NSLineCapStyleRound;
     line.lineJoinStyle = NSLineJoinStyleRound;
     NSBezierPath *area = [NSBezierPath bezierPath];
+    NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
     BOOL penDown = NO;
     BOOL areaOpen = NO;
     NSPoint segmentStart = NSZeroPoint;
@@ -312,14 +333,15 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         NSNumber *value = primary ? point.primaryRemainingPercent : point.secondaryRemainingPercent;
         BOOL breaksBefore = NO;
         if (index > 0) {
-            NSTimeInterval delta = [point.recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
-            breaksBefore = delta > gapThreshold || [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
+            breaksBefore = [gapBreaks containsIndex:index] ||
+                [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
         }
         if (!value || breaksBefore) {
             if (areaOpen) {
                 [area lineToPoint:NSMakePoint(previousPoint.x, NSMaxY(chartRect))];
                 [area lineToPoint:NSMakePoint(segmentStart.x, NSMaxY(chartRect))];
                 [area closePath];
+                [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
                 areaOpen = NO;
             }
             penDown = NO;
@@ -345,6 +367,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         [area lineToPoint:NSMakePoint(previousPoint.x, NSMaxY(chartRect))];
         [area lineToPoint:NSMakePoint(segmentStart.x, NSMaxY(chartRect))];
         [area closePath];
+        [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
     }
 
     if (area.isEmpty) return;
@@ -357,71 +380,19 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [color setStroke];
     [line stroke];
 
-    NSPoint endPoint = previousPoint;
-    [[color colorWithAlphaComponent:0.14] setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
-    [NSColor.windowBackgroundColor setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 3.5, endPoint.y - 3.5, 7, 7)] fill];
-    [color setFill];
-    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 2.5, endPoint.y - 2.5, 5, 5)] fill];
-}
-
-- (void)drawGapMarkersInRect:(NSRect)chartRect
-                    positions:(NSArray<NSNumber *> *)positions
-                   attributes:(NSDictionary *)attributes {
-    NSDictionary *gapAttributes = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName: NSColor.tertiaryLabelColor
-    };
-    NSMutableArray<NSDictionary *> *badges = [NSMutableArray array];
-    for (NSUInteger index = 1; index < self.points.count; index++) {
-        NSTimeInterval delta = [self.points[index].recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
-        if (delta < 6 * 60 * 60) continue;
-        CGFloat left = NSMinX(chartRect) + positions[index - 1].doubleValue;
-        CGFloat right = NSMinX(chartRect) + positions[index].doubleValue;
-        CGFloat midX = (left + right) / 2.0;
-        NSBezierPath *marker = [NSBezierPath bezierPath];
-        [marker moveToPoint:NSMakePoint(midX, NSMinY(chartRect))];
-        [marker lineToPoint:NSMakePoint(midX, NSMaxY(chartRect))];
-        marker.lineWidth = 1;
-        CGFloat dashes[] = {1.5, 3};
-        [marker setLineDash:dashes count:2 phase:0];
-        [[NSColor.tertiaryLabelColor colorWithAlphaComponent:0.55] setStroke];
-        [marker stroke];
-
-        NSString *label = [self compactDuration:delta];
-        NSSize size = [label sizeWithAttributes:gapAttributes];
-        [badges addObject:@{@"text": label, @"mid": @(midX), @"width": @(size.width), @"height": @(size.height)}];
+    for (NSValue *segmentEnd in segmentEnds) {
+        NSPoint endPoint = segmentEnd.pointValue;
+        BOOL latest = NSEqualPoints(endPoint, previousPoint);
+        CGFloat radius = latest ? 2.5 : 1.75;
+        if (latest) {
+            [[color colorWithAlphaComponent:0.14] setFill];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
+            [NSColor.windowBackgroundColor setFill];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 3.5, endPoint.y - 3.5, 7, 7)] fill];
+        }
+        [color setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - radius, endPoint.y - radius, radius * 2, radius * 2)] fill];
     }
-
-    // Overnight breaks sit next to each other. Alternate the badge vertically
-    // when two labels would occupy the same horizontal range.
-    CGFloat previousRight = -CGFLOAT_MAX;
-    BOOL upper = YES;
-    for (NSDictionary *badgeInfo in badges) {
-        CGFloat midX = [badgeInfo[@"mid"] doubleValue];
-        CGFloat textWidth = [badgeInfo[@"width"] doubleValue];
-        CGFloat textHeight = [badgeInfo[@"height"] doubleValue];
-        CGFloat badgeWidth = textWidth + 8;
-        CGFloat badgeX = MAX(NSMinX(chartRect), MIN(midX - badgeWidth / 2.0, NSMaxX(chartRect) - badgeWidth));
-        if (badgeX < previousRight + 3) upper = !upper;
-        else upper = YES;
-        CGFloat badgeY = upper ? NSMinY(chartRect) + 8 : NSMaxY(chartRect) - 24;
-        NSRect badge = NSMakeRect(badgeX, badgeY, badgeWidth, 16);
-        [[NSColor.windowBackgroundColor colorWithAlphaComponent:0.92] setFill];
-        [[NSBezierPath bezierPathWithRoundedRect:badge xRadius:4 yRadius:4] fill];
-        [badgeInfo[@"text"] drawAtPoint:NSMakePoint(NSMidX(badge) - textWidth / 2, NSMidY(badge) - textHeight / 2)
-            withAttributes:gapAttributes];
-        previousRight = NSMaxX(badge);
-        (void)attributes;
-    }
-}
-
-- (NSString *)compactDuration:(NSTimeInterval)interval {
-    NSInteger minutes = (NSInteger)llround(MAX(0, interval) / 60.0);
-    if (minutes >= 48 * 60) return [NSString stringWithFormat:@"空 %ld 天", (long)((minutes + 12 * 60) / (24 * 60))];
-    if (minutes >= 90) return [NSString stringWithFormat:@"空 %ld 小时", (long)((minutes + 30) / 60)];
-    return [NSString stringWithFormat:@"空 %ld 分钟", (long)minutes];
 }
 
 - (void)drawAxisInRect:(NSRect)chartRect
@@ -438,9 +409,8 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         return;
     }
 
-    // Gap durations are drawn on the plot. Repeating a timestamp on both sides of
-    // every overnight break stacks labels into one unreadable band, so the axis
-    // only names the start and end of the visible span.
+    // Idle stretches are narrow breaks in the line. Naming each one on a 300-point
+    // axis collides with the dates, so only the visible span is labeled.
     NSMutableIndexSet *indexes = [NSMutableIndexSet indexSet];
     [indexes addIndex:0];
     [indexes addIndex:self.points.count - 1];
@@ -466,6 +436,29 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         [label[@"text"] drawAtPoint:NSMakePoint(x, NSMaxY(chartRect) + 7) withAttributes:attributes];
         cursor = x + width;
     }
+}
+
+- (NSArray<NSMutableDictionary *> *)layoutRuns {
+    const NSTimeInterval gapThreshold = 6.0 * 60.0 * 60.0;
+    NSMutableArray<NSMutableDictionary *> *runs = [NSMutableArray array];
+    NSMutableDictionary *current = nil;
+    for (NSUInteger index = 1; index < self.points.count; index++) {
+        NSTimeInterval delta = [self.points[index].recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
+        BOOL gap = delta > gapThreshold;
+        CGFloat swing = [self quotaSwingFrom:self.points[index - 1] to:self.points[index]];
+        if (!current || [current[@"gap"] boolValue] != gap) {
+            current = [@{@"gap": @(gap), @"steps": @1, @"swing": @(swing), @"span": @(delta),
+                         @"start": @(index - 1), @"end": @(index)} mutableCopy];
+            [runs addObject:current];
+        } else {
+            current[@"steps"] = @([current[@"steps"] unsignedIntegerValue] + 1);
+            current[@"swing"] = @([current[@"swing"] doubleValue] + swing);
+            current[@"span"] = @([current[@"span"] doubleValue] + delta);
+            current[@"end"] = @(index);
+        }
+    }
+    [self absorbQuietRunsBetweenGaps:runs];
+    return runs;
 }
 
 - (void)drawCenteredText:(NSString *)text
