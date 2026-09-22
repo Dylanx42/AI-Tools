@@ -39,6 +39,24 @@ Profile 只描述布局规则，不保存设备业务数据。错误、冲突或
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
 本轮功能与验证摘要见 [2026-09-16 进度更新](docs/updates/2026-09-16.md)。
 
+## Windows 便携版（同事测试）
+
+Windows 测试包由仓库的 `RackTool Windows package` 工作流在 Windows runner 上生成，文件名为
+`RackTool-windows-x86_64.zip`。从 GitHub Actions 对应运行记录的 **Artifacts** 下载后解压，
+双击其中的 `RackTool.exe` 即可运行；不需要安装 Python、Qt 或管理员权限。当前包面向 Windows
+x86-64，Windows ARM 可尝试使用系统的 x64 兼容层，但 ARM 原生 GUI 仍需人工验证。
+
+首次使用建议按这个顺序操作：
+
+1. 先复制一份要测试的 `.xlsx`，双击 `RackTool.exe`，点击右上角“打开…”选择副本；不传入文件时会打开空项目。
+2. 在“总览”确认机柜排布，在“机柜”查看单柜和 U 位，在“设备”搜索/筛选设备。
+3. “异常与冲突”中的项目会给出具体工作表、单元格或范围和处理建议；先按提示修正源 Excel，再重新扫描。
+4. 需要给同事或客户一份新表时，点击“导出表格”，保存到新的 `.xlsx`。导出表包含“机柜图”和“设备位置表”，不会覆盖源文件。
+5. 只有确认待同步项目无误后，才点击“同步更改”。同步失败会保护源文件，不会把半成品写回 Excel。
+
+项目数据库和运行状态保存在 `%LOCALAPPDATA%\\RackTool`，不会在源 Excel 旁边生成 `.sqlite` 文件；
+源 Excel 的恢复备份按应用策略保留并自动清理。更短的同事版说明也随包附在 `使用说明.txt` 中。
+
 ## 安装与验证
 
 需要 Python 3.11 或更高版本：
