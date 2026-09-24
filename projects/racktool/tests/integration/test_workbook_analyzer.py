@@ -113,6 +113,34 @@ def test_analyzer_supports_ascending_u_axis(tmp_path: Path) -> None:
     assert analysis["placements"][0]["end_u"] == 3
 
 
+def test_analyzer_accepts_explicit_u_suffix_without_reading_device_text_as_axis(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "labeled-u.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-U"
+    for offset, u_number in enumerate(range(12, 0, -1)):
+        sheet.cell(2 + offset, 1, f"{u_number}U")
+        sheet.cell(2 + offset, 3, f"{u_number}u")
+    sheet["B2"] = "S5731-S48T4X"
+    sheet["B4"] = "42U-SW"
+    workbook.save(path)
+
+    analysis = analyze_workbook(path).to_dict()["sheets"][0]
+
+    assert len(analysis["u_axes"]) == 2
+    assert analysis["u_axes"][0]["min_u"] == 1
+    assert analysis["u_axes"][0]["max_u"] == 12
+    assert analysis["racks"][0]["rack_name"] == "RACK-U"
+    assert [item["display_text"] for item in analysis["devices"]] == [
+        "S5731-S48T4X",
+        "42U-SW",
+    ]
+
+
 def test_analyze_cli_emits_candidate_json(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

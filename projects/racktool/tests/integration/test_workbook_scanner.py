@@ -130,6 +130,49 @@ def test_scanner_reads_excel_tolerated_empty_fill_without_touching_source(
     assert path.read_bytes() == source_bytes
 
 
+def _rewrite_archive_names_with_backslashes(path: Path) -> None:
+    """Reproduce a Windows Excel package without using ZipFile name normalization.
+
+    ``ZipInfo`` rewrites backslashes to forward slashes before writing.  The
+    observed workbooks instead contain the backslash bytes directly in both
+    local-file and central-directory names, so the regression has to patch
+    those recorded names after a valid package has been created.
+    """
+
+    payload = path.read_bytes()
+    with ZipFile(path) as archive:
+        names = [info.filename.encode("utf-8") for info in archive.infolist()]
+    for name in names:
+        if b"/" not in name:
+            continue
+        replacement = name.replace(b"/", b"\\")
+        count = payload.count(name)
+        assert count == 2
+        payload = payload.replace(name, replacement)
+    path.write_bytes(payload)
+
+
+def test_scanner_reads_windows_backslash_ooxml_paths_without_touching_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "windows-separators.xlsx"
+    _make_synthetic_workbook(path)
+    _rewrite_archive_names_with_backslashes(path)
+    source_bytes = path.read_bytes()
+    with ZipFile(path) as archive:
+        names = [info.filename for info in archive.infolist()]
+    assert names
+    workbook_name = next(name for name in names if name.endswith("workbook.xml"))
+    assert "/" not in workbook_name
+    assert "\\" in workbook_name
+
+    result = scan_workbook(path).to_dict()
+
+    assert [sheet["name"] for sheet in result["sheets"]] == ["单轴 12U", "双轴 10U"]
+    assert any(cell["value"] == "交换机\n核心" for cell in result["sheets"][0]["cells"])
+    assert path.read_bytes() == source_bytes
+
+
 def test_scanner_treats_omitted_border_sides_as_no_border(tmp_path: Path) -> None:
     path = tmp_path / "empty-border.xlsx"
     workbook = Workbook()

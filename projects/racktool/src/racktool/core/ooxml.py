@@ -12,6 +12,17 @@ from openpyxl.workbook.workbook import Workbook
 _STYLES_PART = "xl/styles.xml"
 
 
+def _member_name(name: str) -> str:
+    """Map Windows ZIP separators to the OOXML forward-slash part names.
+
+    Some Excel builds store workbook parts as ``xl\\workbook.xml``.  The ZIP
+    specification and openpyxl both address those parts with forward slashes,
+    so the in-memory package uses the canonical names without rewriting source.
+    """
+
+    return name.replace("\\", "/")
+
+
 def _local_name(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
@@ -57,23 +68,42 @@ def _normalize_empty_fills(styles_xml: bytes) -> bytes | None:
 
 def _normalized_package(path: Path) -> BytesIO | None:
     with ZipFile(path) as source:
+        members = source.infolist()
+        names = [_member_name(info.filename) for info in members]
+        needs_separator_normalization = any(
+            info.filename != normalized
+            for info, normalized in zip(members, names, strict=True)
+        )
         try:
-            styles_xml = source.read(_STYLES_PART)
-        except KeyError:
-            return None
-        normalized_styles = _normalize_empty_fills(styles_xml)
-        if normalized_styles is None:
+            styles_name = next(
+                info.filename
+                for info, normalized in zip(members, names, strict=True)
+                if normalized == _STYLES_PART
+            )
+        except StopIteration:
+            styles_name = None
+        normalized_styles = (
+            _normalize_empty_fills(source.read(styles_name))
+            if styles_name is not None
+            else None
+        )
+        if normalized_styles is None and not needs_separator_normalization:
             return None
 
+        seen: set[str] = set()
         output = BytesIO()
         with ZipFile(output, "w") as target:
             target.comment = source.comment
-            for member in source.infolist():
+            for member, normalized_name in zip(members, names, strict=True):
+                if normalized_name in seen:
+                    continue
+                seen.add(normalized_name)
                 payload = (
                     normalized_styles
-                    if member.filename == _STYLES_PART
+                    if normalized_styles is not None and normalized_name == _STYLES_PART
                     else source.read(member.filename)
                 )
+                member.filename = normalized_name
                 target.writestr(member, payload)
         output.seek(0)
         return output
