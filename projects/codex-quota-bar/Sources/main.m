@@ -3,6 +3,7 @@
 static NSString *const QuotaErrorDomain = @"app.codexquotabar.desktop";
 static NSString *const QuotaHistoryHeader = @"recorded_at,primary_used_percent,primary_remaining_percent,primary_window_minutes,primary_resets_at,secondary_used_percent,secondary_remaining_percent,secondary_window_minutes,secondary_resets_at\n";
 static const NSTimeInterval QuotaTrendWindowInterval = 7.0 * 24.0 * 60.0 * 60.0;
+static const CGFloat QuotaTrendSmoothingSigma = 8.0;
 
 typedef NS_ENUM(NSInteger, QuotaErrorCode) {
     QuotaErrorCodexNotFound = 1,
@@ -449,11 +450,55 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     NSUInteger count = points.count;
     if (count == 0) return;
 
-    NSPoint firstPoint = points.firstObject.pointValue;
+    NSMutableArray<NSNumber *> *sampleWidths = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger index = 0; index < count; index++) {
+        CGFloat previousSpan = index > 0
+            ? MAX(0, points[index].pointValue.x - points[index - 1].pointValue.x) : 0;
+        CGFloat nextSpan = index + 1 < count
+            ? MAX(0, points[index + 1].pointValue.x - points[index].pointValue.x) : 0;
+        CGFloat sampleWidth = (previousSpan + nextSpan) / 2.0;
+        [sampleWidths addObject:@(MAX(0.5, MIN(2.0 * QuotaTrendSmoothingSigma, sampleWidth)))];
+    }
+
+    NSMutableArray<NSValue *> *trendPoints = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger index = 0; index < count; index++) {
+        NSPoint point = points[index].pointValue;
+        if (count >= 4 && index > 0 && index + 1 < count) {
+            CGFloat weightedY = 0;
+            CGFloat totalWeight = 0;
+            NSUInteger firstNeighbor = index;
+            while (firstNeighbor > 0 &&
+                   point.x - points[firstNeighbor - 1].pointValue.x <= 3.0 * QuotaTrendSmoothingSigma) {
+                firstNeighbor -= 1;
+            }
+            NSUInteger lastNeighbor = index;
+            while (lastNeighbor + 1 < count &&
+                   points[lastNeighbor + 1].pointValue.x - point.x <= 3.0 * QuotaTrendSmoothingSigma) {
+                lastNeighbor += 1;
+            }
+            for (NSUInteger neighborIndex = firstNeighbor; neighborIndex <= lastNeighbor; neighborIndex++) {
+                NSPoint neighbor = points[neighborIndex].pointValue;
+                CGFloat distance = neighbor.x - point.x;
+                CGFloat normalizedDistance = distance / QuotaTrendSmoothingSigma;
+                CGFloat weight = exp(-0.5 * normalizedDistance * normalizedDistance) *
+                                 sampleWidths[neighborIndex].doubleValue;
+                weightedY += neighbor.y * weight;
+                totalWeight += weight;
+            }
+            if (totalWeight > 0) {
+                // Smooth in screen space so dense samples settle into a visible trend.
+                // Segment endpoints remain exact; callers split resets, gaps, and missing data first.
+                point.y = weightedY / totalWeight;
+            }
+        }
+        [trendPoints addObject:[NSValue valueWithPoint:point]];
+    }
+
+    NSPoint firstPoint = trendPoints.firstObject.pointValue;
     [path moveToPoint:firstPoint];
     if (count == 1) return;
     if (count == 2) {
-        [path lineToPoint:points.lastObject.pointValue];
+        [path lineToPoint:trendPoints.lastObject.pointValue];
         return;
     }
 
@@ -461,8 +506,8 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     NSMutableArray<NSNumber *> *slopes = [NSMutableArray arrayWithCapacity:count - 1];
     BOOL hasDuplicatePositions = NO;
     for (NSUInteger index = 0; index + 1 < count; index++) {
-        NSPoint left = points[index].pointValue;
-        NSPoint right = points[index + 1].pointValue;
+        NSPoint left = trendPoints[index].pointValue;
+        NSPoint right = trendPoints[index + 1].pointValue;
         CGFloat span = right.x - left.x;
         if (span <= 0.001) {
             hasDuplicatePositions = YES;
@@ -472,9 +517,9 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         [slopes addObject:@((right.y - left.y) / span)];
     }
     if (hasDuplicatePositions) {
-        // Duplicate display positions cannot define a stable spline; preserve their exact shape.
+        // Duplicate display positions cannot define a stable spline; keep a filtered polyline.
         for (NSUInteger index = 1; index < count; index++) {
-            [path lineToPoint:points[index].pointValue];
+            [path lineToPoint:trendPoints[index].pointValue];
         }
         return;
     }
@@ -525,8 +570,8 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     tangents[count - 1] = @(lastTangent);
 
     for (NSUInteger index = 0; index + 1 < count; index++) {
-        NSPoint left = points[index].pointValue;
-        NSPoint right = points[index + 1].pointValue;
+        NSPoint left = trendPoints[index].pointValue;
+        NSPoint right = trendPoints[index + 1].pointValue;
         CGFloat span = spans[index].doubleValue;
         CGFloat minimumY = MIN(left.y, right.y);
         CGFloat maximumY = MAX(left.y, right.y);
