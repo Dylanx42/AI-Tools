@@ -2,6 +2,7 @@
 
 static NSString *const QuotaErrorDomain = @"app.codexquotabar.desktop";
 static NSString *const QuotaHistoryHeader = @"recorded_at,primary_used_percent,primary_remaining_percent,primary_window_minutes,primary_resets_at,secondary_used_percent,secondary_remaining_percent,secondary_window_minutes,secondary_resets_at\n";
+static const NSTimeInterval QuotaTrendWindowInterval = 7.0 * 24.0 * 60.0 * 60.0;
 
 typedef NS_ENUM(NSInteger, QuotaErrorCode) {
     QuotaErrorCodexNotFound = 1,
@@ -73,22 +74,19 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
 @interface QuotaTrendView : NSView
 @property(nonatomic, copy) NSArray<QuotaHistoryPoint *> *points;
-@property(nonatomic) NSInteger totalRecordCount;
 @property(nonatomic, strong) NSDateFormatter *axisDateFormatter;
 @property(nonatomic, copy) NSString *primaryName;
 @property(nonatomic, copy) NSString *secondaryName;
-- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
-               totalRecordCount:(NSInteger)totalRecordCount;
+- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points;
+- (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text;
 @end
 
 @implementation QuotaTrendView
 
-- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
-               totalRecordCount:(NSInteger)totalRecordCount {
+- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points {
     self = [super initWithFrame:NSMakeRect(0, 0, 368, 168)];
     if (self) {
         _points = [points copy];
-        _totalRecordCount = totalRecordCount;
         _axisDateFormatter = [NSDateFormatter new];
         _axisDateFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
         _axisDateFormatter.timeZone = NSTimeZone.localTimeZone;
@@ -97,11 +95,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _secondaryName = @"7 天";
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，连续的长时间空档收成一段细间隔，空心圆标出额度窗口重新开始的位置";
+        self.accessibilityLabel = @"最近 7 天的剩余额度趋势，蓝色为短窗口，紫色为长窗口，纵轴为 0 到 100 百分比，空心圆标出额度窗口重置";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
-            ? [NSString stringWithFormat:@"%ld 条记录，短窗口 %@%%，长窗口 %@%%",
-               (long)totalRecordCount, latest.primaryRemainingPercent ?: @"未知", latest.secondaryRemainingPercent ?: @"未知"]
+            ? [NSString stringWithFormat:@"%lu 个变化点，短窗口 %@%%，长窗口 %@%%",
+               (unsigned long)points.count, latest.primaryRemainingPercent ?: @"未知", latest.secondaryRemainingPercent ?: @"未知"]
             : @"等待首次额度记录";
     }
     return self;
@@ -115,14 +113,35 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [super drawRect:dirtyRect];
 
     NSDictionary *secondaryAttributes = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightMedium],
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightMedium],
         NSForegroundColorAttributeName: NSColor.secondaryLabelColor
     };
-    NSRect chartRect = NSMakeRect(30, 8, NSWidth(self.bounds) - 34, 132);
+    NSDictionary *titleAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: NSColor.labelColor
+    };
+    [@"额度趋势" drawAtPoint:NSMakePoint(0, 0) withAttributes:titleAttributes];
+    NSString *period = @"近 7 天";
+    NSSize periodSize = [period sizeWithAttributes:secondaryAttributes];
+    NSRect periodPill = NSMakeRect(NSWidth(self.bounds) - periodSize.width - 14, 0,
+                                   periodSize.width + 14, 18);
+    [[NSColor.labelColor colorWithAlphaComponent:0.055] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:periodPill xRadius:9 yRadius:9] fill];
+    [period drawAtPoint:NSMakePoint(NSMidX(periodPill) - periodSize.width / 2, 3)
+         withAttributes:secondaryAttributes];
+
+    CGFloat legendX = [self drawLegendAtX:0 y:20 color:NSColor.systemBlueColor text:self.primaryName];
+    [self drawLegendAtX:legendX + 16 y:20 color:NSColor.systemPurpleColor text:self.secondaryName];
+    NSString *changeCount = [NSString stringWithFormat:@"%lu 个变化点", (unsigned long)self.points.count];
+    NSSize countSize = [changeCount sizeWithAttributes:secondaryAttributes];
+    [changeCount drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width, 22)
+              withAttributes:secondaryAttributes];
+
+    NSRect chartRect = NSMakeRect(30, 43, NSWidth(self.bounds) - 34, 91);
     [self drawGridInRect:chartRect labelAttributes:secondaryAttributes];
 
     if (self.points.count == 0) {
-        [self drawCenteredText:@"等待首次额度记录" inRect:chartRect attributes:secondaryAttributes];
+        [self drawCenteredText:@"近 7 天暂无额度记录" inRect:chartRect attributes:secondaryAttributes];
         return;
     }
 
@@ -306,7 +325,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 positions:(NSArray<NSNumber *> *)positions {
     NSIndexSet *gapBreaks = [self gapBreakIndexes];
     NSBezierPath *line = [NSBezierPath bezierPath];
-    line.lineWidth = 2.4;
+    line.lineWidth = 1.8;
     line.lineCapStyle = NSLineCapStyleRound;
     line.lineJoinStyle = NSLineJoinStyleRound;
     NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
@@ -344,9 +363,9 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     }
     if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
     if (line.isEmpty) return;
-    [[color colorWithAlphaComponent:0.16] setStroke];
+    [[color colorWithAlphaComponent:0.10] setStroke];
     NSBezierPath *halo = [line copy];
-    halo.lineWidth = 6;
+    halo.lineWidth = 4;
     [halo stroke];
     [color setStroke];
     [line stroke];
@@ -437,6 +456,17 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     return runs;
 }
 
+- (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text {
+    [color setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 5, 6, 6)] fill];
+    NSDictionary *attributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    [text drawAtPoint:NSMakePoint(x + 11, y) withAttributes:attributes];
+    return x + 11 + [text sizeWithAttributes:attributes].width;
+}
+
 - (void)drawCenteredText:(NSString *)text
                    inRect:(NSRect)rect
                attributes:(NSDictionary *)attributes {
@@ -509,14 +539,14 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @property(nonatomic) CGFloat footerY;
 @property(nonatomic) CGFloat planBadgeWidth;
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
-                     recordCount:(NSInteger)count loading:(BOOL)loading error:(NSError *)error;
+                         loading:(BOOL)loading error:(NSError *)error;
 @end
 
 @implementation QuotaDashboardView
 - (BOOL)isFlipped { return YES; }
 
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
-                     recordCount:(NSInteger)count loading:(BOOL)loading error:(NSError *)error {
+                         loading:(BOOL)loading error:(NSError *)error {
     self = [super initWithFrame:NSMakeRect(0, 0, 400, 404)];
     if (!self) return nil;
     QuotaLabel(self, @"Codex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
@@ -540,7 +570,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                                                   frame:NSMakeRect(22, 154, 356, 78)
                                                  first:NO]];
 
-    QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points totalRecordCount:count];
+    QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points];
     trend.frame = NSMakeRect(16, 248, 368, 168);
     trend.primaryName = QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口");
     trend.secondaryName = QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口");
@@ -966,8 +996,8 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 @property(nonatomic, strong) NSISO8601DateFormatter *historyDateFormatter;
 @property(nonatomic, strong, nullable) NSURL *historyFileURL;
 @property(nonatomic, copy, nullable) NSString *lastHistorySignature;
-@property(nonatomic) NSInteger historyRecordCount;
 @property(nonatomic, strong) NSMutableArray<QuotaHistoryPoint *> *historyPoints;
+- (void)trimChartPointsToTrendWindow;
 @end
 
 @implementation AppDelegate
@@ -1204,7 +1234,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     }
 
     self.historyFileURL = fileURL;
-    self.historyRecordCount = 0;
     self.lastHistorySignature = nil;
     [self.historyPoints removeAllObjects];
 
@@ -1228,7 +1257,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
             [self appendChartPoint:point];
         }
         self.lastHistorySignature = signature;
-        self.historyRecordCount += 1;
     }
 }
 
@@ -1243,10 +1271,26 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         previous.recordedAt = point.recordedAt;
         previous.primaryResetsAt = point.primaryResetsAt;
         previous.secondaryResetsAt = point.secondaryResetsAt;
+        [self trimChartPointsToTrendWindow];
         return;
     }
     [self.historyPoints addObject:point];
-    if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
+    [self trimChartPointsToTrendWindow];
+}
+
+- (void)trimChartPointsToTrendWindow {
+    // Keep the chart cache date-based; the CSV remains the complete local history.
+    QuotaHistoryPoint *latest = self.historyPoints.lastObject;
+    if (!latest) return;
+    NSDate *cutoff = [latest.recordedAt dateByAddingTimeInterval:-QuotaTrendWindowInterval];
+    NSUInteger firstIndex = 0;
+    while (firstIndex < self.historyPoints.count &&
+           [self.historyPoints[firstIndex].recordedAt compare:cutoff] == NSOrderedAscending) {
+        firstIndex += 1;
+    }
+    if (firstIndex > 0) {
+        [self.historyPoints removeObjectsInRange:NSMakeRange(0, firstIndex)];
+    }
 }
 
 - (BOOL)chartNumber:(nullable NSNumber *)value equals:(nullable NSNumber *)other {
@@ -1291,7 +1335,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     [handle closeAndReturnError:nil];
 
     self.lastHistorySignature = signature;
-    self.historyRecordCount += 1;
     QuotaHistoryPoint *point = [QuotaHistoryPoint new];
     point.recordedAt = snapshot.updatedAt;
     if (snapshot.primary) {
@@ -1330,7 +1373,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     NSMenuItem *dashboardItem = [[NSMenuItem alloc] initWithTitle:@"额度概览" action:nil keyEquivalent:@""];
     dashboardItem.view = [[QuotaDashboardView alloc] initWithSnapshot:self.snapshot
                                                              points:self.historyPoints
-                                                        recordCount:self.historyRecordCount
                                                             loading:self.loading error:self.lastError];
     [menu addItem:dashboardItem];
 
