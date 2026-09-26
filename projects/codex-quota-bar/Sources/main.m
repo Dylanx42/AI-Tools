@@ -87,6 +87,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @property(nonatomic, strong, nullable) NSDate *secondaryPreviousResetAt;
 - (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points;
 - (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text;
+- (void)appendSmoothedPath:(NSBezierPath *)path throughPoints:(NSArray<NSValue *> *)points;
 @end
 
 @implementation QuotaTrendView
@@ -380,8 +381,9 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     line.lineJoinStyle = NSLineJoinStyleRound;
     NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
     NSMutableArray<NSValue *> *resetStarts = [NSMutableArray array];
-    BOOL penDown = NO;
-    NSPoint previousPoint = NSZeroPoint;
+    NSMutableArray<NSValue *> *segmentPoints = [NSMutableArray array];
+    NSPoint latestPoint = NSZeroPoint;
+    BOOL hasLatestPoint = NO;
 
     for (NSUInteger index = 0; index < self.points.count; index++) {
         QuotaHistoryPoint *point = self.points[index];
@@ -392,26 +394,29 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
         }
         if (!value || breaksBefore) {
-            if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
-            penDown = NO;
+            if (segmentPoints.count > 0) {
+                [self appendSmoothedPath:line throughPoints:segmentPoints];
+                [segmentEnds addObject:segmentPoints.lastObject];
+                [segmentPoints removeAllObjects];
+            }
         }
         if (!value) continue;
 
         CGFloat clampedValue = MAX(0.0, MIN(100.0, value.doubleValue));
         NSPoint displayPoint = NSMakePoint(NSMinX(chartRect) + positions[index].doubleValue,
                                            NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect));
-        if (!penDown) {
-            [line moveToPoint:displayPoint];
-            penDown = YES;
-            if (breaksBefore && [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
-                [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
-            }
-        } else {
-            [line lineToPoint:displayPoint];
+        if (segmentPoints.count == 0 && index > 0 &&
+            [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
+            [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
         }
-        previousPoint = displayPoint;
+        [segmentPoints addObject:[NSValue valueWithPoint:displayPoint]];
+        latestPoint = displayPoint;
+        hasLatestPoint = YES;
     }
-    if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
+    if (segmentPoints.count > 0) {
+        [self appendSmoothedPath:line throughPoints:segmentPoints];
+        [segmentEnds addObject:segmentPoints.lastObject];
+    }
     if (line.isEmpty) return;
     [[color colorWithAlphaComponent:0.10] setStroke];
     NSBezierPath *halo = [line copy];
@@ -422,7 +427,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
     for (NSValue *segmentEnd in segmentEnds) {
         NSPoint endPoint = segmentEnd.pointValue;
-        BOOL latest = NSEqualPoints(endPoint, previousPoint);
+        BOOL latest = hasLatestPoint && NSEqualPoints(endPoint, latestPoint);
         if (!latest) continue;
         [NSColor.windowBackgroundColor setFill];
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
@@ -437,6 +442,101 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 3.5, start.y - 3.5, 7, 7)];
         ring.lineWidth = 1.7;
         [ring stroke];
+    }
+}
+
+- (void)appendSmoothedPath:(NSBezierPath *)path throughPoints:(NSArray<NSValue *> *)points {
+    NSUInteger count = points.count;
+    if (count == 0) return;
+
+    NSPoint firstPoint = points.firstObject.pointValue;
+    [path moveToPoint:firstPoint];
+    if (count == 1) return;
+    if (count == 2) {
+        [path lineToPoint:points.lastObject.pointValue];
+        return;
+    }
+
+    NSMutableArray<NSNumber *> *spans = [NSMutableArray arrayWithCapacity:count - 1];
+    NSMutableArray<NSNumber *> *slopes = [NSMutableArray arrayWithCapacity:count - 1];
+    BOOL hasDuplicatePositions = NO;
+    for (NSUInteger index = 0; index + 1 < count; index++) {
+        NSPoint left = points[index].pointValue;
+        NSPoint right = points[index + 1].pointValue;
+        CGFloat span = right.x - left.x;
+        if (span <= 0.001) {
+            hasDuplicatePositions = YES;
+            break;
+        }
+        [spans addObject:@(span)];
+        [slopes addObject:@((right.y - left.y) / span)];
+    }
+    if (hasDuplicatePositions) {
+        // Duplicate display positions cannot define a stable spline; preserve their exact shape.
+        for (NSUInteger index = 1; index < count; index++) {
+            [path lineToPoint:points[index].pointValue];
+        }
+        return;
+    }
+
+    NSMutableArray<NSNumber *> *tangents = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger index = 0; index < count; index++) [tangents addObject:@0];
+
+    CGFloat firstSpan = spans[0].doubleValue;
+    CGFloat secondSpan = spans[1].doubleValue;
+    CGFloat firstSlope = slopes[0].doubleValue;
+    CGFloat secondSlope = slopes[1].doubleValue;
+    CGFloat firstTangent = ((2.0 * firstSpan + secondSpan) * firstSlope - firstSpan * secondSlope) /
+                           (firstSpan + secondSpan);
+    if (firstTangent * firstSlope <= 0) {
+        firstTangent = 0;
+    } else if (firstSlope * secondSlope < 0 && fabs(firstTangent) > 3.0 * fabs(firstSlope)) {
+        firstTangent = 3.0 * firstSlope;
+    }
+    tangents[0] = @(firstTangent);
+
+    for (NSUInteger index = 1; index + 1 < count; index++) {
+        CGFloat previousSlope = slopes[index - 1].doubleValue;
+        CGFloat nextSlope = slopes[index].doubleValue;
+        if (previousSlope * nextSlope <= 0) {
+            tangents[index] = @0;
+            continue;
+        }
+        CGFloat previousSpan = spans[index - 1].doubleValue;
+        CGFloat nextSpan = spans[index].doubleValue;
+        CGFloat weight1 = 2.0 * nextSpan + previousSpan;
+        CGFloat weight2 = nextSpan + 2.0 * previousSpan;
+        CGFloat tangent = (weight1 + weight2) /
+                          (weight1 / previousSlope + weight2 / nextSlope);
+        tangents[index] = @(tangent);
+    }
+
+    CGFloat lastSpan = spans[count - 2].doubleValue;
+    CGFloat previousSpan = spans[count - 3].doubleValue;
+    CGFloat lastSlope = slopes[count - 2].doubleValue;
+    CGFloat previousSlope = slopes[count - 3].doubleValue;
+    CGFloat lastTangent = ((2.0 * lastSpan + previousSpan) * lastSlope - lastSpan * previousSlope) /
+                          (lastSpan + previousSpan);
+    if (lastTangent * lastSlope <= 0) {
+        lastTangent = 0;
+    } else if (lastSlope * previousSlope < 0 && fabs(lastTangent) > 3.0 * fabs(lastSlope)) {
+        lastTangent = 3.0 * lastSlope;
+    }
+    tangents[count - 1] = @(lastTangent);
+
+    for (NSUInteger index = 0; index + 1 < count; index++) {
+        NSPoint left = points[index].pointValue;
+        NSPoint right = points[index + 1].pointValue;
+        CGFloat span = spans[index].doubleValue;
+        CGFloat minimumY = MIN(left.y, right.y);
+        CGFloat maximumY = MAX(left.y, right.y);
+        NSPoint control1 = NSMakePoint(left.x + span / 3.0,
+            left.y + tangents[index].doubleValue * span / 3.0);
+        NSPoint control2 = NSMakePoint(right.x - span / 3.0,
+            right.y - tangents[index + 1].doubleValue * span / 3.0);
+        control1.y = MAX(minimumY, MIN(maximumY, control1.y));
+        control2.y = MAX(minimumY, MIN(maximumY, control2.y));
+        [path curveToPoint:right controlPoint1:control1 controlPoint2:control2];
     }
 }
 
