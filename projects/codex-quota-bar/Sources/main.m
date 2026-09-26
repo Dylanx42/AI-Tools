@@ -2,6 +2,8 @@
 
 static NSString *const QuotaErrorDomain = @"app.codexquotabar.desktop";
 static NSString *const QuotaHistoryHeader = @"recorded_at,primary_used_percent,primary_remaining_percent,primary_window_minutes,primary_resets_at,secondary_used_percent,secondary_remaining_percent,secondary_window_minutes,secondary_resets_at\n";
+static const NSTimeInterval QuotaTrendWindowInterval = 7.0 * 24.0 * 60.0 * 60.0;
+static const CGFloat QuotaTrendSmoothingSigma = 8.0;
 
 typedef NS_ENUM(NSInteger, QuotaErrorCode) {
     QuotaErrorCodexNotFound = 1,
@@ -54,6 +56,12 @@ static NSError *QuotaError(QuotaErrorCode code, NSString *description) {
 @implementation QuotaHistoryPoint
 @end
 
+static NSDate *QuotaPreviousResetAt(QuotaWindow *window) {
+    if (!window || !window.resetsAt || window.durationMinutes <= 0) return nil;
+    NSTimeInterval windowDuration = (NSTimeInterval)window.durationMinutes * 60.0;
+    return [window.resetsAt dateByAddingTimeInterval:-windowDuration];
+}
+
 static NSString *QuotaWindowName(NSInteger minutes, NSString *fallback) {
     if (minutes > 0 && minutes % 1440 == 0) return [NSString stringWithFormat:@"%ld 天", (long)(minutes / 1440)];
     if (minutes > 0 && minutes % 60 == 0) return [NSString stringWithFormat:@"%ld 小时", (long)(minutes / 60)];
@@ -73,22 +81,22 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
 @interface QuotaTrendView : NSView
 @property(nonatomic, copy) NSArray<QuotaHistoryPoint *> *points;
-@property(nonatomic) NSInteger totalRecordCount;
 @property(nonatomic, strong) NSDateFormatter *axisDateFormatter;
 @property(nonatomic, copy) NSString *primaryName;
 @property(nonatomic, copy) NSString *secondaryName;
-- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
-               totalRecordCount:(NSInteger)totalRecordCount;
+@property(nonatomic, strong, nullable) NSDate *primaryPreviousResetAt;
+@property(nonatomic, strong, nullable) NSDate *secondaryPreviousResetAt;
+- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points;
+- (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text;
+- (void)appendSmoothedPath:(NSBezierPath *)path throughPoints:(NSArray<NSValue *> *)points;
 @end
 
 @implementation QuotaTrendView
 
-- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points
-               totalRecordCount:(NSInteger)totalRecordCount {
-    self = [super initWithFrame:NSMakeRect(0, 0, 368, 168)];
+- (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points {
+    self = [super initWithFrame:NSMakeRect(0, 0, 368, 184)];
     if (self) {
         _points = [points copy];
-        _totalRecordCount = totalRecordCount;
         _axisDateFormatter = [NSDateFormatter new];
         _axisDateFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
         _axisDateFormatter.timeZone = NSTimeZone.localTimeZone;
@@ -97,11 +105,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _secondaryName = @"7 天";
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"剩余额度趋势，纵轴为 0 到 100 百分比，横轴按额度变化展开，连续的长时间空档收成一段细间隔，空心圆标出额度窗口重新开始的位置";
+        self.accessibilityLabel = @"最近 7 天的剩余额度趋势，蓝色为短窗口，紫色为长窗口，纵轴为 0 到 100 百分比，空心圆标出额度窗口重置；图表下方显示两个额度窗口上一次重置时间";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
-            ? [NSString stringWithFormat:@"%ld 条记录，短窗口 %@%%，长窗口 %@%%",
-               (long)totalRecordCount, latest.primaryRemainingPercent ?: @"未知", latest.secondaryRemainingPercent ?: @"未知"]
+            ? [NSString stringWithFormat:@"%lu 个变化点，短窗口 %@%%，长窗口 %@%%",
+               (unsigned long)points.count, latest.primaryRemainingPercent ?: @"未知", latest.secondaryRemainingPercent ?: @"未知"]
             : @"等待首次额度记录";
     }
     return self;
@@ -115,14 +123,36 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [super drawRect:dirtyRect];
 
     NSDictionary *secondaryAttributes = @{
-        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightMedium],
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:9 weight:NSFontWeightMedium],
         NSForegroundColorAttributeName: NSColor.secondaryLabelColor
     };
-    NSRect chartRect = NSMakeRect(30, 8, NSWidth(self.bounds) - 34, 132);
+    NSDictionary *titleAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:12 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: NSColor.labelColor
+    };
+    [@"额度趋势" drawAtPoint:NSMakePoint(0, 0) withAttributes:titleAttributes];
+    NSString *period = @"近 7 天";
+    NSSize periodSize = [period sizeWithAttributes:secondaryAttributes];
+    NSRect periodPill = NSMakeRect(NSWidth(self.bounds) - periodSize.width - 14, 0,
+                                   periodSize.width + 14, 18);
+    [[NSColor.labelColor colorWithAlphaComponent:0.055] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:periodPill xRadius:9 yRadius:9] fill];
+    [period drawAtPoint:NSMakePoint(NSMidX(periodPill) - periodSize.width / 2, 3)
+         withAttributes:secondaryAttributes];
+
+    CGFloat legendX = [self drawLegendAtX:0 y:20 color:NSColor.systemBlueColor text:self.primaryName];
+    [self drawLegendAtX:legendX + 16 y:20 color:NSColor.systemPurpleColor text:self.secondaryName];
+    NSString *changeCount = [NSString stringWithFormat:@"%lu 个变化点", (unsigned long)self.points.count];
+    NSSize countSize = [changeCount sizeWithAttributes:secondaryAttributes];
+    [changeCount drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width, 22)
+              withAttributes:secondaryAttributes];
+
+    NSRect chartRect = NSMakeRect(30, 43, NSWidth(self.bounds) - 34, 91);
     [self drawGridInRect:chartRect labelAttributes:secondaryAttributes];
+    [self drawPreviousResetSummary];
 
     if (self.points.count == 0) {
-        [self drawCenteredText:@"等待首次额度记录" inRect:chartRect attributes:secondaryAttributes];
+        [self drawCenteredText:@"近 7 天暂无额度记录" inRect:chartRect attributes:secondaryAttributes];
         return;
     }
 
@@ -131,6 +161,47 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
     [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
     self.toolTip = [self resetTooltip];
+}
+
+- (void)drawPreviousResetSummary {
+    NSDictionary *titleAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    NSDictionary *nameAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    NSDictionary *dateAttributes = @{
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    CGFloat y = 160;
+    [@"上次重置" drawAtPoint:NSMakePoint(0, y) withAttributes:titleAttributes];
+
+    NSArray<NSDictionary *> *windows = @[
+        @{ @"name": self.primaryName ?: @"短窗口",
+           @"date": self.primaryPreviousResetAt ?: NSNull.null,
+           @"color": NSColor.systemBlueColor },
+        @{ @"name": self.secondaryName ?: @"长窗口",
+           @"date": self.secondaryPreviousResetAt ?: NSNull.null,
+           @"color": NSColor.systemPurpleColor }
+    ];
+    NSArray<NSNumber *> *starts = @[@58, @212];
+    for (NSUInteger index = 0; index < windows.count; index++) {
+        NSDictionary *window = windows[index];
+        CGFloat x = starts[index].doubleValue;
+        [(NSColor *)window[@"color"] setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 4, 5, 5)] fill];
+        NSString *name = window[@"name"];
+        [name drawAtPoint:NSMakePoint(x + 9, y) withAttributes:nameAttributes];
+        CGFloat dateX = x + 9 + [name sizeWithAttributes:nameAttributes].width + 5;
+        id dateValue = window[@"date"];
+        NSString *date = dateValue == NSNull.null
+            ? @"暂无数据"
+            : [self.axisDateFormatter stringFromDate:(NSDate *)dateValue];
+        [date drawAtPoint:NSMakePoint(dateX, y) withAttributes:dateAttributes];
+    }
 }
 
 - (NSString *)resetTooltip {
@@ -306,13 +377,14 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 positions:(NSArray<NSNumber *> *)positions {
     NSIndexSet *gapBreaks = [self gapBreakIndexes];
     NSBezierPath *line = [NSBezierPath bezierPath];
-    line.lineWidth = 2.4;
+    line.lineWidth = 1.8;
     line.lineCapStyle = NSLineCapStyleRound;
     line.lineJoinStyle = NSLineJoinStyleRound;
     NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
     NSMutableArray<NSValue *> *resetStarts = [NSMutableArray array];
-    BOOL penDown = NO;
-    NSPoint previousPoint = NSZeroPoint;
+    NSMutableArray<NSValue *> *segmentPoints = [NSMutableArray array];
+    NSPoint latestPoint = NSZeroPoint;
+    BOOL hasLatestPoint = NO;
 
     for (NSUInteger index = 0; index < self.points.count; index++) {
         QuotaHistoryPoint *point = self.points[index];
@@ -323,37 +395,40 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
         }
         if (!value || breaksBefore) {
-            if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
-            penDown = NO;
+            if (segmentPoints.count > 0) {
+                [self appendSmoothedPath:line throughPoints:segmentPoints];
+                [segmentEnds addObject:segmentPoints.lastObject];
+                [segmentPoints removeAllObjects];
+            }
         }
         if (!value) continue;
 
         CGFloat clampedValue = MAX(0.0, MIN(100.0, value.doubleValue));
         NSPoint displayPoint = NSMakePoint(NSMinX(chartRect) + positions[index].doubleValue,
                                            NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect));
-        if (!penDown) {
-            [line moveToPoint:displayPoint];
-            penDown = YES;
-            if (breaksBefore && [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
-                [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
-            }
-        } else {
-            [line lineToPoint:displayPoint];
+        if (segmentPoints.count == 0 && index > 0 &&
+            [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
+            [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
         }
-        previousPoint = displayPoint;
+        [segmentPoints addObject:[NSValue valueWithPoint:displayPoint]];
+        latestPoint = displayPoint;
+        hasLatestPoint = YES;
     }
-    if (penDown) [segmentEnds addObject:[NSValue valueWithPoint:previousPoint]];
+    if (segmentPoints.count > 0) {
+        [self appendSmoothedPath:line throughPoints:segmentPoints];
+        [segmentEnds addObject:segmentPoints.lastObject];
+    }
     if (line.isEmpty) return;
-    [[color colorWithAlphaComponent:0.16] setStroke];
+    [[color colorWithAlphaComponent:0.10] setStroke];
     NSBezierPath *halo = [line copy];
-    halo.lineWidth = 6;
+    halo.lineWidth = 4;
     [halo stroke];
     [color setStroke];
     [line stroke];
 
     for (NSValue *segmentEnd in segmentEnds) {
         NSPoint endPoint = segmentEnd.pointValue;
-        BOOL latest = NSEqualPoints(endPoint, previousPoint);
+        BOOL latest = hasLatestPoint && NSEqualPoints(endPoint, latestPoint);
         if (!latest) continue;
         [NSColor.windowBackgroundColor setFill];
         [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
@@ -368,6 +443,145 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         NSBezierPath *ring = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(start.x - 3.5, start.y - 3.5, 7, 7)];
         ring.lineWidth = 1.7;
         [ring stroke];
+    }
+}
+
+- (void)appendSmoothedPath:(NSBezierPath *)path throughPoints:(NSArray<NSValue *> *)points {
+    NSUInteger count = points.count;
+    if (count == 0) return;
+
+    NSMutableArray<NSNumber *> *sampleWidths = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger index = 0; index < count; index++) {
+        CGFloat previousSpan = index > 0
+            ? MAX(0, points[index].pointValue.x - points[index - 1].pointValue.x) : 0;
+        CGFloat nextSpan = index + 1 < count
+            ? MAX(0, points[index + 1].pointValue.x - points[index].pointValue.x) : 0;
+        CGFloat sampleWidth = (previousSpan + nextSpan) / 2.0;
+        [sampleWidths addObject:@(MAX(0.5, MIN(2.0 * QuotaTrendSmoothingSigma, sampleWidth)))];
+    }
+
+    NSMutableArray<NSValue *> *trendPoints = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger index = 0; index < count; index++) {
+        NSPoint point = points[index].pointValue;
+        if (count >= 4 && index > 0 && index + 1 < count) {
+            CGFloat weightedY = 0;
+            CGFloat totalWeight = 0;
+            NSUInteger firstNeighbor = index;
+            while (firstNeighbor > 0 &&
+                   point.x - points[firstNeighbor - 1].pointValue.x <= 3.0 * QuotaTrendSmoothingSigma) {
+                firstNeighbor -= 1;
+            }
+            NSUInteger lastNeighbor = index;
+            while (lastNeighbor + 1 < count &&
+                   points[lastNeighbor + 1].pointValue.x - point.x <= 3.0 * QuotaTrendSmoothingSigma) {
+                lastNeighbor += 1;
+            }
+            for (NSUInteger neighborIndex = firstNeighbor; neighborIndex <= lastNeighbor; neighborIndex++) {
+                NSPoint neighbor = points[neighborIndex].pointValue;
+                CGFloat distance = neighbor.x - point.x;
+                CGFloat normalizedDistance = distance / QuotaTrendSmoothingSigma;
+                CGFloat weight = exp(-0.5 * normalizedDistance * normalizedDistance) *
+                                 sampleWidths[neighborIndex].doubleValue;
+                weightedY += neighbor.y * weight;
+                totalWeight += weight;
+            }
+            if (totalWeight > 0) {
+                // Smooth in screen space so dense samples settle into a visible trend.
+                // Segment endpoints remain exact; callers split resets, gaps, and missing data first.
+                point.y = weightedY / totalWeight;
+            }
+        }
+        [trendPoints addObject:[NSValue valueWithPoint:point]];
+    }
+
+    NSPoint firstPoint = trendPoints.firstObject.pointValue;
+    [path moveToPoint:firstPoint];
+    if (count == 1) return;
+    if (count == 2) {
+        [path lineToPoint:trendPoints.lastObject.pointValue];
+        return;
+    }
+
+    NSMutableArray<NSNumber *> *spans = [NSMutableArray arrayWithCapacity:count - 1];
+    NSMutableArray<NSNumber *> *slopes = [NSMutableArray arrayWithCapacity:count - 1];
+    BOOL hasDuplicatePositions = NO;
+    for (NSUInteger index = 0; index + 1 < count; index++) {
+        NSPoint left = trendPoints[index].pointValue;
+        NSPoint right = trendPoints[index + 1].pointValue;
+        CGFloat span = right.x - left.x;
+        if (span <= 0.001) {
+            hasDuplicatePositions = YES;
+            break;
+        }
+        [spans addObject:@(span)];
+        [slopes addObject:@((right.y - left.y) / span)];
+    }
+    if (hasDuplicatePositions) {
+        // Duplicate display positions cannot define a stable spline; keep a filtered polyline.
+        for (NSUInteger index = 1; index < count; index++) {
+            [path lineToPoint:trendPoints[index].pointValue];
+        }
+        return;
+    }
+
+    NSMutableArray<NSNumber *> *tangents = [NSMutableArray arrayWithCapacity:count];
+    for (NSUInteger index = 0; index < count; index++) [tangents addObject:@0];
+
+    CGFloat firstSpan = spans[0].doubleValue;
+    CGFloat secondSpan = spans[1].doubleValue;
+    CGFloat firstSlope = slopes[0].doubleValue;
+    CGFloat secondSlope = slopes[1].doubleValue;
+    CGFloat firstTangent = ((2.0 * firstSpan + secondSpan) * firstSlope - firstSpan * secondSlope) /
+                           (firstSpan + secondSpan);
+    if (firstTangent * firstSlope <= 0) {
+        firstTangent = 0;
+    } else if (firstSlope * secondSlope < 0 && fabs(firstTangent) > 3.0 * fabs(firstSlope)) {
+        firstTangent = 3.0 * firstSlope;
+    }
+    tangents[0] = @(firstTangent);
+
+    for (NSUInteger index = 1; index + 1 < count; index++) {
+        CGFloat previousSlope = slopes[index - 1].doubleValue;
+        CGFloat nextSlope = slopes[index].doubleValue;
+        if (previousSlope * nextSlope <= 0) {
+            tangents[index] = @0;
+            continue;
+        }
+        CGFloat previousSpan = spans[index - 1].doubleValue;
+        CGFloat nextSpan = spans[index].doubleValue;
+        CGFloat weight1 = 2.0 * nextSpan + previousSpan;
+        CGFloat weight2 = nextSpan + 2.0 * previousSpan;
+        CGFloat tangent = (weight1 + weight2) /
+                          (weight1 / previousSlope + weight2 / nextSlope);
+        tangents[index] = @(tangent);
+    }
+
+    CGFloat lastSpan = spans[count - 2].doubleValue;
+    CGFloat previousSpan = spans[count - 3].doubleValue;
+    CGFloat lastSlope = slopes[count - 2].doubleValue;
+    CGFloat previousSlope = slopes[count - 3].doubleValue;
+    CGFloat lastTangent = ((2.0 * lastSpan + previousSpan) * lastSlope - lastSpan * previousSlope) /
+                          (lastSpan + previousSpan);
+    if (lastTangent * lastSlope <= 0) {
+        lastTangent = 0;
+    } else if (lastSlope * previousSlope < 0 && fabs(lastTangent) > 3.0 * fabs(lastSlope)) {
+        lastTangent = 3.0 * lastSlope;
+    }
+    tangents[count - 1] = @(lastTangent);
+
+    for (NSUInteger index = 0; index + 1 < count; index++) {
+        NSPoint left = trendPoints[index].pointValue;
+        NSPoint right = trendPoints[index + 1].pointValue;
+        CGFloat span = spans[index].doubleValue;
+        CGFloat minimumY = MIN(left.y, right.y);
+        CGFloat maximumY = MAX(left.y, right.y);
+        NSPoint control1 = NSMakePoint(left.x + span / 3.0,
+            left.y + tangents[index].doubleValue * span / 3.0);
+        NSPoint control2 = NSMakePoint(right.x - span / 3.0,
+            right.y - tangents[index + 1].doubleValue * span / 3.0);
+        control1.y = MAX(minimumY, MIN(maximumY, control1.y));
+        control2.y = MAX(minimumY, MIN(maximumY, control2.y));
+        [path curveToPoint:right controlPoint1:control1 controlPoint2:control2];
     }
 }
 
@@ -435,6 +649,17 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     }
     [self absorbQuietRunsBetweenGaps:runs];
     return runs;
+}
+
+- (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text {
+    [color setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 5, 6, 6)] fill];
+    NSDictionary *attributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    [text drawAtPoint:NSMakePoint(x + 11, y) withAttributes:attributes];
+    return x + 11 + [text sizeWithAttributes:attributes].width;
 }
 
 - (void)drawCenteredText:(NSString *)text
@@ -509,15 +734,15 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @property(nonatomic) CGFloat footerY;
 @property(nonatomic) CGFloat planBadgeWidth;
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
-                     recordCount:(NSInteger)count loading:(BOOL)loading error:(NSError *)error;
+                         loading:(BOOL)loading error:(NSError *)error;
 @end
 
 @implementation QuotaDashboardView
 - (BOOL)isFlipped { return YES; }
 
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
-                     recordCount:(NSInteger)count loading:(BOOL)loading error:(NSError *)error {
-    self = [super initWithFrame:NSMakeRect(0, 0, 400, 404)];
+                         loading:(BOOL)loading error:(NSError *)error {
+    self = [super initWithFrame:NSMakeRect(0, 0, 400, 466)];
     if (!self) return nil;
     QuotaLabel(self, @"Codex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
     if (snapshot.planType.length) {
@@ -540,10 +765,23 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                                                   frame:NSMakeRect(22, 154, 356, 78)
                                                  first:NO]];
 
-    QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points totalRecordCount:count];
-    trend.frame = NSMakeRect(16, 248, 368, 168);
+    QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points];
+    trend.frame = NSMakeRect(16, 248, 368, 184);
     trend.primaryName = QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口");
     trend.secondaryName = QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口");
+    trend.primaryPreviousResetAt = QuotaPreviousResetAt(snapshot.primary);
+    trend.secondaryPreviousResetAt = QuotaPreviousResetAt(snapshot.secondary);
+    NSDateFormatter *previousResetFormatter = [NSDateFormatter new];
+    previousResetFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    previousResetFormatter.timeZone = NSTimeZone.localTimeZone;
+    previousResetFormatter.dateFormat = @"M/d HH:mm";
+    NSString *primaryPreviousReset = trend.primaryPreviousResetAt
+        ? [previousResetFormatter stringFromDate:trend.primaryPreviousResetAt] : @"暂无数据";
+    NSString *secondaryPreviousReset = trend.secondaryPreviousResetAt
+        ? [previousResetFormatter stringFromDate:trend.secondaryPreviousResetAt] : @"暂无数据";
+    trend.accessibilityValue = [NSString stringWithFormat:@"%@；%@上次重置 %@，%@上次重置 %@",
+                                trend.accessibilityValue, trend.primaryName, primaryPreviousReset,
+                                trend.secondaryName, secondaryPreviousReset];
     [self addSubview:trend];
 
     NSMutableArray<NSString *> *details = [NSMutableArray array];
@@ -578,13 +816,13 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         [details addObject:creditText];
         resetCreditTip = creditTip;
     }
-    _footerY = 428;
+    _footerY = 442;
     if (details.count) {
         NSTextField *detailLabel = QuotaLabel(self, [details componentsJoinedByString:@"    "],
-                                             NSMakeRect(22, 424, 356, 16), 11, NSFontWeightMedium, NSColor.secondaryLabelColor);
+                                             NSMakeRect(22, 440, 356, 16), 11, NSFontWeightMedium, NSColor.secondaryLabelColor);
         detailLabel.toolTip = resetCreditTip ?: detailLabel.stringValue;
-        _footerY = 450;
-        [self setFrameSize:NSMakeSize(400, 474)];
+        _footerY = 466;
+        [self setFrameSize:NSMakeSize(400, 490)];
     }
     NSDateFormatter *updated = [NSDateFormatter new];
     updated.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
@@ -966,8 +1204,8 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 @property(nonatomic, strong) NSISO8601DateFormatter *historyDateFormatter;
 @property(nonatomic, strong, nullable) NSURL *historyFileURL;
 @property(nonatomic, copy, nullable) NSString *lastHistorySignature;
-@property(nonatomic) NSInteger historyRecordCount;
 @property(nonatomic, strong) NSMutableArray<QuotaHistoryPoint *> *historyPoints;
+- (void)trimChartPointsToTrendWindow;
 @end
 
 @implementation AppDelegate
@@ -1204,7 +1442,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     }
 
     self.historyFileURL = fileURL;
-    self.historyRecordCount = 0;
     self.lastHistorySignature = nil;
     [self.historyPoints removeAllObjects];
 
@@ -1228,7 +1465,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
             [self appendChartPoint:point];
         }
         self.lastHistorySignature = signature;
-        self.historyRecordCount += 1;
     }
 }
 
@@ -1243,10 +1479,26 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         previous.recordedAt = point.recordedAt;
         previous.primaryResetsAt = point.primaryResetsAt;
         previous.secondaryResetsAt = point.secondaryResetsAt;
+        [self trimChartPointsToTrendWindow];
         return;
     }
     [self.historyPoints addObject:point];
-    if (self.historyPoints.count > 120) [self.historyPoints removeObjectAtIndex:0];
+    [self trimChartPointsToTrendWindow];
+}
+
+- (void)trimChartPointsToTrendWindow {
+    // Keep the chart cache date-based; the CSV remains the complete local history.
+    QuotaHistoryPoint *latest = self.historyPoints.lastObject;
+    if (!latest) return;
+    NSDate *cutoff = [latest.recordedAt dateByAddingTimeInterval:-QuotaTrendWindowInterval];
+    NSUInteger firstIndex = 0;
+    while (firstIndex < self.historyPoints.count &&
+           [self.historyPoints[firstIndex].recordedAt compare:cutoff] == NSOrderedAscending) {
+        firstIndex += 1;
+    }
+    if (firstIndex > 0) {
+        [self.historyPoints removeObjectsInRange:NSMakeRange(0, firstIndex)];
+    }
 }
 
 - (BOOL)chartNumber:(nullable NSNumber *)value equals:(nullable NSNumber *)other {
@@ -1291,7 +1543,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     [handle closeAndReturnError:nil];
 
     self.lastHistorySignature = signature;
-    self.historyRecordCount += 1;
     QuotaHistoryPoint *point = [QuotaHistoryPoint new];
     point.recordedAt = snapshot.updatedAt;
     if (snapshot.primary) {
@@ -1330,7 +1581,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     NSMenuItem *dashboardItem = [[NSMenuItem alloc] initWithTitle:@"额度概览" action:nil keyEquivalent:@""];
     dashboardItem.view = [[QuotaDashboardView alloc] initWithSnapshot:self.snapshot
                                                              points:self.historyPoints
-                                                        recordCount:self.historyRecordCount
                                                             loading:self.loading error:self.lastError];
     [menu addItem:dashboardItem];
 
