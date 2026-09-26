@@ -1,9 +1,10 @@
 from pathlib import Path
+from xml.etree import ElementTree
 from zipfile import ZipFile
 
 import pytest
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Border, PatternFill
 
 from racktool.core import scan_workbook
 
@@ -36,6 +37,22 @@ def _make_synthetic_workbook(path: Path) -> None:
     dual.merge_cells("B2:B4")
     dual["B2"] = "防火墙\n三行文本"
     workbook.save(path)
+
+
+def _add_empty_fill_record(path: Path) -> None:
+    with ZipFile(path) as archive:
+        members = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    styles = next(payload for info, payload in members if info.filename == "xl/styles.xml")
+    root = ElementTree.fromstring(styles)
+    namespace = root.tag.split("}", 1)[0] + "}"
+    fills = root.find(f"{namespace}fills")
+    assert fills is not None
+    ElementTree.SubElement(fills, f"{namespace}fill")
+    fills.set("count", str(len(fills)))
+    normalized = ElementTree.tostring(root, encoding="utf-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, payload in members:
+            archive.writestr(info, normalized if info.filename == "xl/styles.xml" else payload)
 
 
 def test_scanner_covers_synthetic_structure_and_is_deterministic(tmp_path: Path) -> None:
@@ -93,6 +110,84 @@ def test_scanner_preserves_styled_blank_cells_without_expanding_content_range(
     assert result["used_range"] == "A1:A1"
     assert cells["C3"]["value"] is None
     assert cells["C3"]["style_signature"] != cells["A1"]["style_signature"]
+    assert path.read_bytes() == source_bytes
+
+
+def test_scanner_reads_excel_tolerated_empty_fill_without_touching_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "empty-fill.xlsx"
+    _make_synthetic_workbook(path)
+    _add_empty_fill_record(path)
+    source_bytes = path.read_bytes()
+
+    result = scan_workbook(path).to_dict()
+
+    assert [sheet["name"] for sheet in result["sheets"]] == ["单轴 12U", "双轴 10U"]
+    assert any(
+        cell["value"] == "交换机\n核心" for cell in result["sheets"][0]["cells"]
+    )
+    assert path.read_bytes() == source_bytes
+
+
+def _rewrite_archive_names_with_backslashes(path: Path) -> None:
+    """Reproduce a Windows Excel package without using ZipFile name normalization.
+
+    ``ZipInfo`` rewrites backslashes to forward slashes before writing.  The
+    observed workbooks instead contain the backslash bytes directly in both
+    local-file and central-directory names, so the regression has to patch
+    those recorded names after a valid package has been created.
+    """
+
+    payload = path.read_bytes()
+    with ZipFile(path) as archive:
+        names = [info.filename.encode("utf-8") for info in archive.infolist()]
+    for name in names:
+        if b"/" not in name:
+            continue
+        replacement = name.replace(b"/", b"\\")
+        count = payload.count(name)
+        assert count == 2
+        payload = payload.replace(name, replacement)
+    path.write_bytes(payload)
+
+
+def test_scanner_reads_windows_backslash_ooxml_paths_without_touching_source(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "windows-separators.xlsx"
+    _make_synthetic_workbook(path)
+    _rewrite_archive_names_with_backslashes(path)
+    source_bytes = path.read_bytes()
+    with ZipFile(path) as archive:
+        names = [info.filename for info in archive.infolist()]
+    assert names
+    workbook_name = next(name for name in names if name.endswith("workbook.xml"))
+    assert "/" not in workbook_name
+    assert "\\" in workbook_name
+
+    result = scan_workbook(path).to_dict()
+
+    assert [sheet["name"] for sheet in result["sheets"]] == ["单轴 12U", "双轴 10U"]
+    assert any(cell["value"] == "交换机\n核心" for cell in result["sheets"][0]["cells"])
+    assert path.read_bytes() == source_bytes
+
+
+def test_scanner_treats_omitted_border_sides_as_no_border(tmp_path: Path) -> None:
+    path = tmp_path / "empty-border.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet["A1"] = "没有边框子项"
+    sheet["A1"].border = Border()
+    workbook.save(path)
+    workbook.close()
+    source_bytes = path.read_bytes()
+
+    result = scan_workbook(path).to_dict()["sheets"][0]
+
+    assert result["cells"][0]["value"] == "没有边框子项"
+    assert len(result["cells"][0]["style_signature"]) == 16
     assert path.read_bytes() == source_bytes
 
 

@@ -99,7 +99,7 @@ V1 不追求“任何 Excel 100% 自动识别”。目标是：
 ```text
 racktool analyze <file.xlsx>
 racktool validate <file.xlsx>
-racktool export <file.xlsx>
+racktool export <project.sqlite> <output.xlsx>
 racktool profile ...
 ```
 
@@ -160,8 +160,11 @@ Skill 不复制一套 Parser。
 至少支持导出：
 
 - JSON；
-- Excel 清单（后续实现）；
+- Excel 工作簿，其中包含标准化机柜图 Sheet 和可筛选的设备位置表 Sheet；
 - 便于测试的稳定序列化格式。
+
+Excel 导出必须保留设备显示文字中的原换行，按源工作表和源版面位置稳定排序，并生成独立文件；
+不得把“导出”实现成覆盖源工作簿。保存应先写临时文件，重载验证成功后再原子替换导出目标。
 
 ### FR-005 Profile
 
