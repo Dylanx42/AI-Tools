@@ -55,6 +55,12 @@ static NSError *QuotaError(QuotaErrorCode code, NSString *description) {
 @implementation QuotaHistoryPoint
 @end
 
+static NSDate *QuotaPreviousResetAt(QuotaWindow *window) {
+    if (!window || !window.resetsAt || window.durationMinutes <= 0) return nil;
+    NSTimeInterval windowDuration = (NSTimeInterval)window.durationMinutes * 60.0;
+    return [window.resetsAt dateByAddingTimeInterval:-windowDuration];
+}
+
 static NSString *QuotaWindowName(NSInteger minutes, NSString *fallback) {
     if (minutes > 0 && minutes % 1440 == 0) return [NSString stringWithFormat:@"%ld 天", (long)(minutes / 1440)];
     if (minutes > 0 && minutes % 60 == 0) return [NSString stringWithFormat:@"%ld 小时", (long)(minutes / 60)];
@@ -77,6 +83,8 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @property(nonatomic, strong) NSDateFormatter *axisDateFormatter;
 @property(nonatomic, copy) NSString *primaryName;
 @property(nonatomic, copy) NSString *secondaryName;
+@property(nonatomic, strong, nullable) NSDate *primaryPreviousResetAt;
+@property(nonatomic, strong, nullable) NSDate *secondaryPreviousResetAt;
 - (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points;
 - (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text;
 @end
@@ -84,7 +92,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @implementation QuotaTrendView
 
 - (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points {
-    self = [super initWithFrame:NSMakeRect(0, 0, 368, 168)];
+    self = [super initWithFrame:NSMakeRect(0, 0, 368, 184)];
     if (self) {
         _points = [points copy];
         _axisDateFormatter = [NSDateFormatter new];
@@ -95,7 +103,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _secondaryName = @"7 天";
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"最近 7 天的剩余额度趋势，蓝色为短窗口，紫色为长窗口，纵轴为 0 到 100 百分比，空心圆标出额度窗口重置";
+        self.accessibilityLabel = @"最近 7 天的剩余额度趋势，蓝色为短窗口，紫色为长窗口，纵轴为 0 到 100 百分比，空心圆标出额度窗口重置；图表下方显示两个额度窗口上一次重置时间";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
             ? [NSString stringWithFormat:@"%lu 个变化点，短窗口 %@%%，长窗口 %@%%",
@@ -139,6 +147,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
     NSRect chartRect = NSMakeRect(30, 43, NSWidth(self.bounds) - 34, 91);
     [self drawGridInRect:chartRect labelAttributes:secondaryAttributes];
+    [self drawPreviousResetSummary];
 
     if (self.points.count == 0) {
         [self drawCenteredText:@"近 7 天暂无额度记录" inRect:chartRect attributes:secondaryAttributes];
@@ -150,6 +159,47 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
     [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
     self.toolTip = [self resetTooltip];
+}
+
+- (void)drawPreviousResetSummary {
+    NSDictionary *titleAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    NSDictionary *nameAttributes = @{
+        NSFontAttributeName: [NSFont systemFontOfSize:10 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    NSDictionary *dateAttributes = @{
+        NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:10 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.secondaryLabelColor
+    };
+    CGFloat y = 160;
+    [@"上次重置" drawAtPoint:NSMakePoint(0, y) withAttributes:titleAttributes];
+
+    NSArray<NSDictionary *> *windows = @[
+        @{ @"name": self.primaryName ?: @"短窗口",
+           @"date": self.primaryPreviousResetAt ?: NSNull.null,
+           @"color": NSColor.systemBlueColor },
+        @{ @"name": self.secondaryName ?: @"长窗口",
+           @"date": self.secondaryPreviousResetAt ?: NSNull.null,
+           @"color": NSColor.systemPurpleColor }
+    ];
+    NSArray<NSNumber *> *starts = @[@58, @212];
+    for (NSUInteger index = 0; index < windows.count; index++) {
+        NSDictionary *window = windows[index];
+        CGFloat x = starts[index].doubleValue;
+        [(NSColor *)window[@"color"] setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x, y + 4, 5, 5)] fill];
+        NSString *name = window[@"name"];
+        [name drawAtPoint:NSMakePoint(x + 9, y) withAttributes:nameAttributes];
+        CGFloat dateX = x + 9 + [name sizeWithAttributes:nameAttributes].width + 5;
+        id dateValue = window[@"date"];
+        NSString *date = dateValue == NSNull.null
+            ? @"暂无数据"
+            : [self.axisDateFormatter stringFromDate:(NSDate *)dateValue];
+        [date drawAtPoint:NSMakePoint(dateX, y) withAttributes:dateAttributes];
+    }
 }
 
 - (NSString *)resetTooltip {
@@ -547,7 +597,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
                          loading:(BOOL)loading error:(NSError *)error {
-    self = [super initWithFrame:NSMakeRect(0, 0, 400, 404)];
+    self = [super initWithFrame:NSMakeRect(0, 0, 400, 466)];
     if (!self) return nil;
     QuotaLabel(self, @"Codex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
     if (snapshot.planType.length) {
@@ -571,9 +621,22 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                                                  first:NO]];
 
     QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points];
-    trend.frame = NSMakeRect(16, 248, 368, 168);
+    trend.frame = NSMakeRect(16, 248, 368, 184);
     trend.primaryName = QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口");
     trend.secondaryName = QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口");
+    trend.primaryPreviousResetAt = QuotaPreviousResetAt(snapshot.primary);
+    trend.secondaryPreviousResetAt = QuotaPreviousResetAt(snapshot.secondary);
+    NSDateFormatter *previousResetFormatter = [NSDateFormatter new];
+    previousResetFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    previousResetFormatter.timeZone = NSTimeZone.localTimeZone;
+    previousResetFormatter.dateFormat = @"M/d HH:mm";
+    NSString *primaryPreviousReset = trend.primaryPreviousResetAt
+        ? [previousResetFormatter stringFromDate:trend.primaryPreviousResetAt] : @"暂无数据";
+    NSString *secondaryPreviousReset = trend.secondaryPreviousResetAt
+        ? [previousResetFormatter stringFromDate:trend.secondaryPreviousResetAt] : @"暂无数据";
+    trend.accessibilityValue = [NSString stringWithFormat:@"%@；%@上次重置 %@，%@上次重置 %@",
+                                trend.accessibilityValue, trend.primaryName, primaryPreviousReset,
+                                trend.secondaryName, secondaryPreviousReset];
     [self addSubview:trend];
 
     NSMutableArray<NSString *> *details = [NSMutableArray array];
@@ -608,13 +671,13 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         [details addObject:creditText];
         resetCreditTip = creditTip;
     }
-    _footerY = 428;
+    _footerY = 442;
     if (details.count) {
         NSTextField *detailLabel = QuotaLabel(self, [details componentsJoinedByString:@"    "],
-                                             NSMakeRect(22, 424, 356, 16), 11, NSFontWeightMedium, NSColor.secondaryLabelColor);
+                                             NSMakeRect(22, 440, 356, 16), 11, NSFontWeightMedium, NSColor.secondaryLabelColor);
         detailLabel.toolTip = resetCreditTip ?: detailLabel.stringValue;
-        _footerY = 450;
-        [self setFrameSize:NSMakeSize(400, 474)];
+        _footerY = 466;
+        [self setFrameSize:NSMakeSize(400, 490)];
     }
     NSDateFormatter *updated = [NSDateFormatter new];
     updated.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
