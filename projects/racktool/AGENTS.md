@@ -190,6 +190,20 @@ GUI / CLI / Skill
 - 不要为了“看起来完整”提前实现 ROADMAP 后续阶段。
 - 遇到信息不足时，优先做安全的基础设施和测试，不要编造真实机柜格式。
 
+### 10.1 RackTool 项目专用 All in Luna
+
+- RackTool 中会修改源代码、测试、项目文档、构建或打包配置的工作，默认使用
+  `projects/racktool/.agents/skills/racktool-allinluna/SKILL.md` 作为 All in Luna 的项目专用规则；
+  纯问答、规划讨论和不改动文件的只读查询无需为了形式启动 Run。
+- 项目专用规则覆盖通用流程的任务拆分建议，但不放松 Action Relay 的真实回执要求、权限边界、
+  数据安全约束或本文件的 RackCore 架构原则。不要机械地按阶段、文件或角色拆出多个 Lane。
+- GPT-6 Luna 是 RackTool 实现任务的首选模型；推理强度按改动风险动态选择。必须区分请求模型、解析模型
+  与实际运行模型；没有运行证据时不得宣称已由指定模型完成。
+- Codex 对需求范围、项目文档/ADR、分支状态、差异审查、测试和最终 Gate 结论负责。All in Luna
+  的 Run 状态或 Lane 自报 PASS 不能替代 RackTool 的实际验收。
+- Skill/Agent 可以组织意图和调用接口，但确定性识别、身份、位置、冲突与 Excel 写入逻辑仍只能由 RackCore
+  执行；不得把模型、运行时或云服务引入离线 GUI/Core。
+
 ## 11. 当前关键事实
 
 - 项目目标：开源/公司内部可共享的跨平台 Excel 机柜管理工具。
