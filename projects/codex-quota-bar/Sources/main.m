@@ -87,13 +87,18 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 @property(nonatomic, copy) NSString *secondaryName;
 @property(nonatomic, strong, nullable) NSDate *primaryPreviousResetAt;
 @property(nonatomic, strong, nullable) NSDate *secondaryPreviousResetAt;
-@property(nonatomic, copy) NSArray<NSNumber *> *chartToolTipTags;
-@property(nonatomic, copy) NSDictionary<NSNumber *, NSArray<NSNumber *> *> *toolTipPointIndexesByTag;
+@property(nonatomic, strong, nullable) NSTrackingArea *chartTrackingArea;
+@property(nonatomic) NSToolTipTag chartToolTipTag;
+@property(nonatomic) NSUInteger hoveredPointIndex;
 - (instancetype)initWithPoints:(NSArray<QuotaHistoryPoint *> *)points;
 - (CGFloat)drawLegendAtX:(CGFloat)x y:(CGFloat)y color:(NSColor *)color text:(NSString *)text;
 - (void)appendSmoothedPath:(NSBezierPath *)path throughPoints:(NSArray<NSValue *> *)points;
 - (NSRect)chartPlotRect;
+- (void)drawHoverSelectionInRect:(NSRect)chartRect positions:(NSArray<NSNumber *> *)positions;
 - (NSArray<NSNumber *> *)displayPositionsForChartWidth:(CGFloat)width;
+- (NSUInteger)nearestPointIndexForChartX:(CGFloat)x;
+- (void)updateHoveredPointAtViewLocation:(NSPoint)location;
+- (NSString *)tooltipTextForPointIndex:(NSUInteger)index;
 - (BOOL)isWindowResetFrom:(QuotaHistoryPoint *)previous to:(QuotaHistoryPoint *)current primary:(BOOL)primary;
 @end
 
@@ -109,11 +114,10 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _axisDateFormatter.dateFormat = @"M/d HH:mm";
         _primaryName = @"5 小时";
         _secondaryName = @"7 天";
-        _chartToolTipTags = @[];
-        _toolTipPointIndexesByTag = @{};
+        _hoveredPointIndex = NSNotFound;
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"最近 7 天的剩余额度趋势，蓝色为短窗口，紫色为长窗口，纵轴为 0 到 100 百分比，空心圆标出额度窗口重置；图表下方显示两个额度窗口上一次重置时间";
+        self.accessibilityLabel = @"最近 7 天的剩余额度趋势。将鼠标移入曲线查看横向最近采样点的时间和两个窗口额度；空心圆标记重置。图表下方显示两个窗口的上次重置时间。";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
             ? [NSString stringWithFormat:@"%lu 个变化点，短窗口 %@%%，长窗口 %@%%",
@@ -134,49 +138,75 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 - (void)updateTrackingAreas {
     [super updateTrackingAreas];
 
-    for (NSNumber *tag in self.chartToolTipTags) {
-        [self removeToolTip:(NSToolTipTag)tag.unsignedIntegerValue];
-    }
-    self.chartToolTipTags = @[];
-    self.toolTipPointIndexesByTag = @{};
+    if (self.chartTrackingArea) [self removeTrackingArea:self.chartTrackingArea];
+    self.chartTrackingArea = nil;
+    if (self.chartToolTipTag != 0) [self removeToolTip:self.chartToolTipTag];
+    self.chartToolTipTag = 0;
     if (self.points.count == 0) return;
 
+    NSTrackingAreaOptions options = NSTrackingMouseMoved |
+        NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways | NSTrackingInVisibleRect;
+    self.chartTrackingArea = [[NSTrackingArea alloc] initWithRect:NSZeroRect
+                                                         options:options
+                                                           owner:self
+                                                        userInfo:nil];
+    [self addTrackingArea:self.chartTrackingArea];
+    self.chartToolTipTag = [self addToolTipRect:[self chartPlotRect] owner:self userData:NULL];
+}
+
+- (void)viewDidMoveToWindow {
+    [super viewDidMoveToWindow];
+    self.window.acceptsMouseMovedEvents = YES;
+    [self updateTrackingAreas];
+}
+
+- (void)mouseEntered:(NSEvent *)event {
+    NSPoint location = [self convertPoint:event.locationInWindow fromView:nil];
+    [self updateHoveredPointAtViewLocation:location];
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    NSPoint location = [self convertPoint:event.locationInWindow fromView:nil];
+    [self updateHoveredPointAtViewLocation:location];
+}
+
+- (void)mouseExited:(NSEvent *)event {
+    (void)event;
+    if (self.hoveredPointIndex == NSNotFound) return;
+    self.hoveredPointIndex = NSNotFound;
+    [self setNeedsDisplay:YES];
+}
+
+- (void)updateHoveredPointAtViewLocation:(NSPoint)location {
+    if (!NSPointInRect(location, [self chartPlotRect])) {
+        if (self.hoveredPointIndex != NSNotFound) {
+            self.hoveredPointIndex = NSNotFound;
+            [self setNeedsDisplay:YES];
+        }
+        return;
+    }
+
+    NSUInteger index = [self nearestPointIndexForChartX:location.x];
+    if (index == NSNotFound || self.hoveredPointIndex == index) return;
+    self.hoveredPointIndex = index;
+    [self setNeedsDisplay:YES];
+}
+
+- (NSUInteger)nearestPointIndexForChartX:(CGFloat)x {
+    if (self.points.count == 0) return NSNotFound;
     NSRect chartRect = [self chartPlotRect];
     NSArray<NSNumber *> *positions = [self displayPositionsForChartWidth:NSWidth(chartRect)];
-    NSMutableArray<NSDictionary *> *groups = [NSMutableArray array];
-    NSUInteger index = 0;
-    while (index < positions.count) {
-        CGFloat x = positions[index].doubleValue;
-        NSMutableArray<NSNumber *> *indexes = [NSMutableArray arrayWithObject:@(index)];
-        NSUInteger nextIndex = index + 1;
-        while (nextIndex < positions.count && fabs(positions[nextIndex].doubleValue - x) <= 0.001) {
-            [indexes addObject:@(nextIndex)];
-            nextIndex += 1;
+    CGFloat localX = x - NSMinX(chartRect);
+    NSUInteger nearestIndex = NSNotFound;
+    CGFloat nearestDistance = CGFLOAT_MAX;
+    for (NSUInteger index = 0; index < positions.count; index++) {
+        CGFloat distance = fabs(localX - positions[index].doubleValue);
+        if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestIndex = index;
         }
-        [groups addObject:@{@"x": @(x), @"indexes": [indexes copy]}];
-        index = nextIndex;
     }
-
-    NSMutableArray<NSNumber *> *tags = [NSMutableArray arrayWithCapacity:groups.count];
-    NSMutableDictionary<NSNumber *, NSArray<NSNumber *> *> *indexesByTag = [NSMutableDictionary dictionary];
-    for (NSUInteger groupIndex = 0; groupIndex < groups.count; groupIndex++) {
-        CGFloat localX = [groups[groupIndex][@"x"] doubleValue];
-        CGFloat left = groupIndex == 0
-            ? NSMinX(chartRect)
-            : NSMinX(chartRect) + ([groups[groupIndex - 1][@"x"] doubleValue] + localX) / 2.0;
-        CGFloat right = groupIndex + 1 == groups.count
-            ? NSMaxX(chartRect)
-            : NSMinX(chartRect) + (localX + [groups[groupIndex + 1][@"x"] doubleValue]) / 2.0;
-        if (right <= left) continue;
-
-        NSRect tipRect = NSMakeRect(left, NSMinY(chartRect), right - left, NSHeight(chartRect));
-        NSToolTipTag tag = [self addToolTipRect:tipRect owner:self userData:NULL];
-        NSNumber *tagKey = @(tag);
-        [tags addObject:tagKey];
-        indexesByTag[tagKey] = groups[groupIndex][@"indexes"];
-    }
-    self.chartToolTipTags = tags;
-    self.toolTipPointIndexesByTag = indexesByTag;
+    return nearestIndex;
 }
 
 - (void)drawRect:(NSRect)dirtyRect {
@@ -202,7 +232,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
     CGFloat legendX = [self drawLegendAtX:0 y:20 color:NSColor.systemBlueColor text:self.primaryName];
     [self drawLegendAtX:legendX + 16 y:20 color:NSColor.systemPurpleColor text:self.secondaryName];
-    NSString *changeCount = [NSString stringWithFormat:@"%lu 个变化点", (unsigned long)self.points.count];
+    NSString *changeCount = [NSString stringWithFormat:@"%lu 点 · 移入曲线看数据", (unsigned long)self.points.count];
     NSSize countSize = [changeCount sizeWithAttributes:secondaryAttributes];
     [changeCount drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width, 22)
               withAttributes:secondaryAttributes];
@@ -219,7 +249,43 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     NSArray<NSNumber *> *positions = [self displayPositionsForChartWidth:NSWidth(chartRect)];
     [self drawSeriesPrimary:NO color:NSColor.systemPurpleColor inRect:chartRect positions:positions];
     [self drawSeriesPrimary:YES color:NSColor.systemBlueColor inRect:chartRect positions:positions];
+    [self drawHoverSelectionInRect:chartRect positions:positions];
     [self drawAxisInRect:chartRect positions:positions attributes:secondaryAttributes];
+}
+
+- (void)drawHoverSelectionInRect:(NSRect)chartRect positions:(NSArray<NSNumber *> *)positions {
+    NSUInteger index = self.hoveredPointIndex;
+    if (index == NSNotFound || index >= self.points.count) return;
+    CGFloat x = NSMinX(chartRect) + positions[index].doubleValue;
+    NSBezierPath *crosshair = [NSBezierPath bezierPath];
+    CGFloat dash[] = {2.0, 2.0};
+    [crosshair setLineDash:dash count:2 phase:0];
+    [crosshair moveToPoint:NSMakePoint(x, NSMinY(chartRect))];
+    [crosshair lineToPoint:NSMakePoint(x, NSMaxY(chartRect))];
+    crosshair.lineWidth = 0.8;
+    [[NSColor.secondaryLabelColor colorWithAlphaComponent:0.42] setStroke];
+    [crosshair stroke];
+
+    QuotaHistoryPoint *sample = self.points[index];
+    NSArray<NSDictionary *> *series = @[
+        @{ @"value": sample.secondaryRemainingPercent ?: NSNull.null,
+           @"color": NSColor.systemPurpleColor },
+        @{ @"value": sample.primaryRemainingPercent ?: NSNull.null,
+           @"color": NSColor.systemBlueColor }
+    ];
+    for (NSDictionary *item in series) {
+        id rawValue = item[@"value"];
+        if (rawValue == NSNull.null) continue;
+        CGFloat value = MAX(0.0, MIN(100.0, [rawValue doubleValue]));
+        CGFloat y = NSMinY(chartRect) + (100.0 - value) / 100.0 * NSHeight(chartRect);
+        NSColor *color = item[@"color"];
+        [NSColor.windowBackgroundColor setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x - 5, y - 5, 10, 10)] fill];
+        [color setStroke];
+        NSBezierPath *marker = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x - 4, y - 4, 8, 8)];
+        marker.lineWidth = 2;
+        [marker stroke];
+    }
 }
 
 - (void)drawPreviousResetSummary {
@@ -268,48 +334,29 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
              point:(NSPoint)point
           userData:(void *)data {
     (void)view;
+    (void)tag;
     (void)data;
-    NSArray<NSNumber *> *indexes = self.toolTipPointIndexesByTag[@(tag)];
-    if (indexes.count == 0) return @"";
-
-    NSRect chartRect = [self chartPlotRect];
-    NSUInteger nearestIndex = NSNotFound;
-    CGFloat nearestDistance = CGFLOAT_MAX;
-    for (NSNumber *indexValue in indexes) {
-        NSUInteger index = indexValue.unsignedIntegerValue;
-        QuotaHistoryPoint *sample = self.points[index];
-        NSNumber *primaryValue = sample.primaryRemainingPercent;
-        NSNumber *secondaryValue = sample.secondaryRemainingPercent;
-        if (primaryValue) {
-            CGFloat y = NSMinY(chartRect) + (100.0 - primaryValue.doubleValue) / 100.0 * NSHeight(chartRect);
-            CGFloat distance = fabs(point.y - y);
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                nearestIndex = index;
-            }
-        }
-        if (secondaryValue) {
-            CGFloat y = NSMinY(chartRect) + (100.0 - secondaryValue.doubleValue) / 100.0 * NSHeight(chartRect);
-            CGFloat distance = fabs(point.y - y);
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                nearestIndex = index;
-            }
-        }
-    }
+    NSUInteger nearestIndex = self.hoveredPointIndex != NSNotFound
+        ? self.hoveredPointIndex
+        : [self nearestPointIndexForChartX:point.x];
     if (nearestIndex == NSNotFound) return @"";
+    return [self tooltipTextForPointIndex:nearestIndex];
+}
 
+- (NSString *)tooltipTextForPointIndex:(NSUInteger)nearestIndex {
+    if (nearestIndex >= self.points.count) return @"";
     QuotaHistoryPoint *sample = self.points[nearestIndex];
     NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:
-        [self.axisDateFormatter stringFromDate:sample.recordedAt]];
+        [NSString stringWithFormat:@"采样点：%@（最近横向点）",
+         [self.axisDateFormatter stringFromDate:sample.recordedAt]]];
     if (sample.primaryRemainingPercent) {
         double remaining = sample.primaryRemainingPercent.doubleValue;
-        [lines addObject:[NSString stringWithFormat:@"%@ 剩余 %.0f%% · 已用 %.0f%%",
+        [lines addObject:[NSString stringWithFormat:@"%@：剩余 %.0f%% · 已用 %.0f%%",
                           self.primaryName, remaining, 100.0 - remaining]];
     }
     if (sample.secondaryRemainingPercent) {
         double remaining = sample.secondaryRemainingPercent.doubleValue;
-        [lines addObject:[NSString stringWithFormat:@"%@ 剩余 %.0f%% · 已用 %.0f%%",
+        [lines addObject:[NSString stringWithFormat:@"%@：剩余 %.0f%% · 已用 %.0f%%",
                           self.secondaryName, remaining, 100.0 - remaining]];
     }
     if (nearestIndex > 0) {
@@ -317,10 +364,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         NSMutableArray<NSString *> *resetWindows = [NSMutableArray array];
         if ([self isWindowResetFrom:previous to:sample primary:YES]) [resetWindows addObject:self.primaryName];
         if ([self isWindowResetFrom:previous to:sample primary:NO]) [resetWindows addObject:self.secondaryName];
-        if (resetWindows.count > 0) {
-            [lines addObject:[NSString stringWithFormat:@"本点重置：%@",
-                              [resetWindows componentsJoinedByString:@"、"]]];
-        }
+        [lines addObject:resetWindows.count > 0
+            ? [NSString stringWithFormat:@"本采样重置：%@", [resetWindows componentsJoinedByString:@"、"]]
+            : @"本采样未检测到重置"];
+    } else {
+        [lines addObject:@"首个采样点，无前值可比较"];
     }
     return [lines componentsJoinedByString:@"\n"];
 }
@@ -462,38 +510,14 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     return swing;
 }
 
-- (NSIndexSet *)gapBreakIndexesForPrimary:(BOOL)primary {
-    NSMutableIndexSet *breaks = [NSMutableIndexSet indexSet];
-    for (NSUInteger index = 1; index < self.points.count; index++) {
-        NSTimeInterval delta = [self.points[index].recordedAt
-            timeIntervalSinceDate:self.points[index - 1].recordedAt];
-        if (delta <= QuotaTrendGapThreshold) continue;
-
-        NSNumber *previousValue = primary
-            ? self.points[index - 1].primaryRemainingPercent
-            : self.points[index - 1].secondaryRemainingPercent;
-        NSNumber *currentValue = primary
-            ? self.points[index].primaryRemainingPercent
-            : self.points[index].secondaryRemainingPercent;
-        BOOL unchanged = previousValue && currentValue &&
-            fabs(previousValue.doubleValue - currentValue.doubleValue) < 0.001;
-        // A long interval without quota changes is still a continuous, flat trend.
-        // Break only this window's line when its endpoint value changed or is missing.
-        if (!unchanged) [breaks addIndex:index];
-    }
-    return breaks;
-}
-
 - (void)drawSeriesPrimary:(BOOL)primary
                     color:(NSColor *)color
                    inRect:(NSRect)chartRect
                 positions:(NSArray<NSNumber *> *)positions {
-    NSIndexSet *gapBreaks = [self gapBreakIndexesForPrimary:primary];
     NSBezierPath *line = [NSBezierPath bezierPath];
     line.lineWidth = 1.8;
     line.lineCapStyle = NSLineCapStyleRound;
     line.lineJoinStyle = NSLineJoinStyleRound;
-    NSMutableArray<NSValue *> *segmentEnds = [NSMutableArray array];
     NSMutableArray<NSValue *> *resetStarts = [NSMutableArray array];
     NSMutableArray<NSValue *> *segmentPoints = [NSMutableArray array];
     NSPoint latestPoint = NSZeroPoint;
@@ -502,25 +526,22 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     for (NSUInteger index = 0; index < self.points.count; index++) {
         QuotaHistoryPoint *point = self.points[index];
         NSNumber *value = primary ? point.primaryRemainingPercent : point.secondaryRemainingPercent;
-        BOOL breaksBefore = NO;
-        if (index > 0) {
-            breaksBefore = [gapBreaks containsIndex:index] ||
-                [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
-        }
-        if (!value || breaksBefore) {
-            if (segmentPoints.count > 0) {
-                [self appendSmoothedPath:line throughPoints:segmentPoints];
-                [segmentEnds addObject:segmentPoints.lastObject];
-                [segmentPoints removeAllObjects];
-            }
-        }
         if (!value) continue;
 
         CGFloat clampedValue = MAX(0.0, MIN(100.0, value.doubleValue));
         NSPoint displayPoint = NSMakePoint(NSMinX(chartRect) + positions[index].doubleValue,
                                            NSMinY(chartRect) + (100.0 - clampedValue) / 100.0 * NSHeight(chartRect));
-        if (segmentPoints.count == 0 && index > 0 &&
-            [self isWindowResetFrom:self.points[index - 1] to:point primary:primary]) {
+        BOOL reset = index > 0 &&
+            [self isWindowResetFrom:self.points[index - 1] to:point primary:primary];
+        if (reset) {
+            if (segmentPoints.count > 0) {
+                [self appendSmoothedPath:line throughPoints:segmentPoints];
+                [segmentPoints removeAllObjects];
+            } else if (line.isEmpty) {
+                [line moveToPoint:displayPoint];
+            }
+            // Keep the stroke continuous; reset markers explain the abrupt change.
+            [line lineToPoint:displayPoint];
             [resetStarts addObject:[NSValue valueWithPoint:displayPoint]];
         }
         [segmentPoints addObject:[NSValue valueWithPoint:displayPoint]];
@@ -529,7 +550,6 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     }
     if (segmentPoints.count > 0) {
         [self appendSmoothedPath:line throughPoints:segmentPoints];
-        [segmentEnds addObject:segmentPoints.lastObject];
     }
     if (line.isEmpty) return;
     [[color colorWithAlphaComponent:0.10] setStroke];
@@ -539,14 +559,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [color setStroke];
     [line stroke];
 
-    for (NSValue *segmentEnd in segmentEnds) {
-        NSPoint endPoint = segmentEnd.pointValue;
-        BOOL latest = hasLatestPoint && NSEqualPoints(endPoint, latestPoint);
-        if (!latest) continue;
+    if (hasLatestPoint) {
         [NSColor.windowBackgroundColor setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 5, endPoint.y - 5, 10, 10)] fill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(latestPoint.x - 5, latestPoint.y - 5, 10, 10)] fill];
         [color setFill];
-        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(endPoint.x - 3, endPoint.y - 3, 6, 6)] fill];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(latestPoint.x - 3, latestPoint.y - 3, 6, 6)] fill];
     }
     for (NSValue *resetStart in resetStarts) {
         NSPoint start = resetStart.pointValue;
@@ -600,7 +617,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
             }
             if (totalWeight > 0) {
                 // Smooth in screen space so dense samples settle into a visible trend.
-                // Segment endpoints remain exact; callers split resets, gaps, and missing data first.
+                // Segment endpoints remain exact; callers split at reset edges only.
                 point.y = weightedY / totalWeight;
             }
         }
@@ -712,7 +729,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         return;
     }
 
-    // Idle stretches are narrow breaks in the line. Naming each one on a 300-point
+    // Idle stretches are compressed horizontally. Naming each one on a 300-point
     // axis collides with the dates, so only the visible span is labeled.
     NSMutableIndexSet *indexes = [NSMutableIndexSet indexSet];
     [indexes addIndex:0];
