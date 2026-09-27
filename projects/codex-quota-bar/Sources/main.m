@@ -3,6 +3,7 @@
 static NSString *const QuotaErrorDomain = @"app.codexquotabar.desktop";
 static NSString *const QuotaHistoryHeader = @"recorded_at,primary_used_percent,primary_remaining_percent,primary_window_minutes,primary_resets_at,secondary_used_percent,secondary_remaining_percent,secondary_window_minutes,secondary_resets_at\n";
 static const NSTimeInterval QuotaTrendWindowInterval = 7.0 * 24.0 * 60.0 * 60.0;
+static const NSTimeInterval QuotaTrendGapThreshold = 6.0 * 60.0 * 60.0;
 static const CGFloat QuotaTrendSmoothingSigma = 8.0;
 
 typedef NS_ENUM(NSInteger, QuotaErrorCode) {
@@ -461,12 +462,24 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     return swing;
 }
 
- - (NSIndexSet *)gapBreakIndexes {
+- (NSIndexSet *)gapBreakIndexesForPrimary:(BOOL)primary {
     NSMutableIndexSet *breaks = [NSMutableIndexSet indexSet];
-    for (NSDictionary *run in [self layoutRuns]) {
-        if (![run[@"gap"] boolValue]) continue;
-        NSUInteger end = [run[@"end"] unsignedIntegerValue];
-        if (end > [run[@"start"] unsignedIntegerValue]) [breaks addIndex:end];
+    for (NSUInteger index = 1; index < self.points.count; index++) {
+        NSTimeInterval delta = [self.points[index].recordedAt
+            timeIntervalSinceDate:self.points[index - 1].recordedAt];
+        if (delta <= QuotaTrendGapThreshold) continue;
+
+        NSNumber *previousValue = primary
+            ? self.points[index - 1].primaryRemainingPercent
+            : self.points[index - 1].secondaryRemainingPercent;
+        NSNumber *currentValue = primary
+            ? self.points[index].primaryRemainingPercent
+            : self.points[index].secondaryRemainingPercent;
+        BOOL unchanged = previousValue && currentValue &&
+            fabs(previousValue.doubleValue - currentValue.doubleValue) < 0.001;
+        // A long interval without quota changes is still a continuous, flat trend.
+        // Break only this window's line when its endpoint value changed or is missing.
+        if (!unchanged) [breaks addIndex:index];
     }
     return breaks;
 }
@@ -475,7 +488,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                     color:(NSColor *)color
                    inRect:(NSRect)chartRect
                 positions:(NSArray<NSNumber *> *)positions {
-    NSIndexSet *gapBreaks = [self gapBreakIndexes];
+    NSIndexSet *gapBreaks = [self gapBreakIndexesForPrimary:primary];
     NSBezierPath *line = [NSBezierPath bezierPath];
     line.lineWidth = 1.8;
     line.lineCapStyle = NSLineCapStyleRound;
@@ -729,12 +742,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 }
 
 - (NSArray<NSMutableDictionary *> *)layoutRuns {
-    const NSTimeInterval gapThreshold = 6.0 * 60.0 * 60.0;
     NSMutableArray<NSMutableDictionary *> *runs = [NSMutableArray array];
     NSMutableDictionary *current = nil;
     for (NSUInteger index = 1; index < self.points.count; index++) {
         NSTimeInterval delta = [self.points[index].recordedAt timeIntervalSinceDate:self.points[index - 1].recordedAt];
-        BOOL gap = delta > gapThreshold;
+        BOOL gap = delta > QuotaTrendGapThreshold;
         CGFloat swing = [self quotaSwingFrom:self.points[index - 1] to:self.points[index]];
         if (!current || [current[@"gap"] boolValue] != gap) {
             current = [@{@"gap": @(gap), @"steps": @1, @"swing": @(swing), @"span": @(delta),
