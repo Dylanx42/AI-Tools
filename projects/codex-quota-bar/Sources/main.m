@@ -117,7 +117,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         _hoveredPointIndex = NSNotFound;
         self.accessibilityElement = YES;
         self.accessibilityRole = NSAccessibilityImageRole;
-        self.accessibilityLabel = @"最近 7 天的剩余额度趋势。将鼠标移入曲线查看横向最近采样点的时间和两个窗口额度；空心圆标记重置。图表下方显示两个窗口的上次重置时间。";
+        self.accessibilityLabel = @"最近 7 天的剩余额度趋势。将鼠标移入图表绘图区查看横向最近采样点的时间和两个窗口额度；空心圆标记重置。图表下方显示两个窗口的上次重置时间。";
         QuotaHistoryPoint *latest = points.lastObject;
         self.accessibilityValue = latest
             ? [NSString stringWithFormat:@"%lu 个变化点，短窗口 %@%%，长窗口 %@%%",
@@ -232,7 +232,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
     CGFloat legendX = [self drawLegendAtX:0 y:20 color:NSColor.systemBlueColor text:self.primaryName];
     [self drawLegendAtX:legendX + 16 y:20 color:NSColor.systemPurpleColor text:self.secondaryName];
-    NSString *changeCount = [NSString stringWithFormat:@"%lu 点 · 移入曲线看数据", (unsigned long)self.points.count];
+    NSString *changeCount = [NSString stringWithFormat:@"%lu 点 · 移入图表看数据", (unsigned long)self.points.count];
     NSSize countSize = [changeCount sizeWithAttributes:secondaryAttributes];
     [changeCount drawAtPoint:NSMakePoint(NSWidth(self.bounds) - countSize.width, 22)
               withAttributes:secondaryAttributes];
