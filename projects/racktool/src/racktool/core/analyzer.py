@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
@@ -21,6 +22,8 @@ from racktool.models.analysis import (
     WorkbookAnalysis,
 )
 from racktool.models.workbook import SheetInfo
+
+_U_LABEL = re.compile(r"^0*([1-9]\d*)[UuＵｕ]$")
 
 
 def _candidate_id(prefix: str, *parts: str) -> str:
@@ -83,6 +86,11 @@ def _integer_u(value: Any) -> int | None:
         return value
     if isinstance(value, float) and value.is_integer():
         return int(value)
+    if isinstance(value, str):
+        match = _U_LABEL.fullmatch(value.strip())
+        if match is None:
+            return None
+        return int(match.group(1))
     return None
 
 

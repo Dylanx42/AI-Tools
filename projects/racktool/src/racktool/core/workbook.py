@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Any
 from zipfile import BadZipFile
 
-from openpyxl import load_workbook
 from openpyxl.cell.cell import Cell
+from openpyxl.styles.borders import Side
 from openpyxl.styles.colors import Color
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.worksheet import Worksheet
 
+from racktool.core.ooxml import load_xlsx_workbook
 from racktool.models.domain import CellRange
 from racktool.models.workbook import CellInfo, SheetInfo, WorkbookInfo
 
@@ -31,6 +32,15 @@ def _color(color: Color | None) -> dict[str, Any] | None:
     }
 
 
+def _border_side(side: Side | None) -> dict[str, Any]:
+    if side is None:
+        return {"style": None, "color": None}
+    return {
+        "style": side.style,
+        "color": _color(side.color),
+    }
+
+
 def _style_signature(cell: Cell) -> str:
     font = cell.font
     fill = cell.fill
@@ -44,10 +54,7 @@ def _style_signature(cell: Cell) -> str:
             "text_rotation": alignment.text_rotation,
         },
         "border": {
-            side: {
-                "style": getattr(border, side).style,
-                "color": _color(getattr(border, side).color),
-            }
+            side: _border_side(getattr(border, side))
             for side in ("left", "right", "top", "bottom")
         },
         "fill": {
@@ -137,7 +144,7 @@ def scan_workbook(path: Path) -> WorkbookInfo:
         raise FileNotFoundError(workbook_path)
 
     try:
-        workbook = load_workbook(workbook_path, read_only=False, data_only=False)
+        workbook = load_xlsx_workbook(workbook_path)
         try:
             sheets = [_scan_sheet(sheet, index) for index, sheet in enumerate(workbook.worksheets)]
             return WorkbookInfo(format="xlsx", sheets=sheets)

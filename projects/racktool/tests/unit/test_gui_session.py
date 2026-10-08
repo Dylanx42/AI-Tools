@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from racktool.core.storage import default_project_database_path
 from racktool.gui.session import GuiSession
+from racktool.models.domain import Device
+from racktool.models.project import IdentityConflict
 from racktool.persistence import load_project
 
 
@@ -47,6 +52,89 @@ def test_session_lists_devices_racks_mappings_and_occupancy(tmp_path: Path) -> N
     assert any(row["display_text"] == "设备 B" for row in occupancy)
 
 
+def test_default_project_state_does_not_create_excel_sidecars(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+
+    session = GuiSession.open_workbook(path)
+
+    assert session.database_path.is_file()
+    assert session.database_path.parent != path.parent
+    assert not path.with_suffix(".xlsx.sqlite").exists()
+    assert not list(path.parent.glob("layout.xlsx.sqlite.bak-*"))
+
+
+def test_open_migrates_legacy_sidecar_and_transaction_backups(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    legacy = path.with_suffix(".xlsx.sqlite")
+    _make_layout(path)
+    original = GuiSession.open_workbook(path, legacy)
+    legacy_backup = legacy.with_name(f"{legacy.name}.bak-old")
+    shutil.copy2(legacy, legacy_backup)
+
+    migrated = GuiSession.open_workbook(path)
+
+    assert migrated.project.to_dict() == original.project.to_dict()
+    assert migrated.database_path != legacy
+    assert migrated.database_path.is_file()
+    assert not legacy.exists()
+    assert not legacy_backup.exists()
+    transaction_root = migrated.database_path.parents[2] / "transactions"
+    assert not list(transaction_root.rglob("*.bak-*"))
+    assert "专用目录" in migrated.status_message
+
+
+def test_legacy_migration_refuses_divergent_project_state(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    legacy = path.with_suffix(".xlsx.sqlite")
+    _make_layout(path)
+    GuiSession.open_workbook(path, legacy)
+    managed = default_project_database_path(path)
+    GuiSession.open_workbook(path, managed)
+
+    with pytest.raises(ValueError, match="两份内容不同"):
+        GuiSession.open_workbook(path)
+
+    assert legacy.is_file()
+    assert managed.is_file()
+
+
+def test_legacy_cleanup_failure_keeps_both_valid_copies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    legacy = path.with_suffix(".xlsx.sqlite")
+    _make_layout(path)
+    original = GuiSession.open_workbook(path, legacy)
+    real_unlink = Path.unlink
+
+    def fail_only_legacy(candidate: Path, *args: object, **kwargs: object) -> None:
+        if candidate == legacy:
+            raise PermissionError("legacy file is busy")
+        real_unlink(candidate, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_only_legacy)
+
+    migrated = GuiSession.open_workbook(path)
+
+    assert migrated.project.to_dict() == original.project.to_dict()
+    assert migrated.database_path.is_file()
+    assert legacy.is_file()
+    assert "下次继续清理" in migrated.status_message
+
+
+def test_successful_rescan_does_not_leave_transaction_backup(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+
+    session.rescan()
+
+    transaction_root = session.database_path.parents[2] / "transactions"
+    assert not list(transaction_root.rglob("*.bak-*"))
+
+
 def test_session_preview_rejects_occupied_target(tmp_path: Path) -> None:
     path = tmp_path / "layout.xlsx"
     _make_layout(path)
@@ -60,6 +148,96 @@ def test_session_preview_rejects_occupied_target(tmp_path: Path) -> None:
 
     assert any(item.code == "target-u-occupied" for item in plan.conflicts)
     assert session.conflict_rows()
+
+
+def test_staging_does_not_write_until_global_apply(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    before = path.read_bytes()
+    device = next(
+        item for item in session.project.devices if item.display_text == "设备 B"
+    )
+    rack_id = session.project.racks[0].rack_id
+
+    plan = session.stage_move(device.device_id, rack_id, 4, 4)
+
+    assert not plan.conflicts
+    assert len(session.pending_moves) == 1
+    assert path.read_bytes() == before
+
+    result = session.apply_pending_moves()
+
+    assert result.status == "applied"
+    assert not session.pending_moves
+    assert path.read_bytes() != before
+    workbook = load_workbook(path)
+    try:
+        assert workbook["机柜"]["B10"].value == "设备 B"
+        assert workbook["机柜"]["B5"].value is None
+    finally:
+        workbook.close()
+
+
+def test_staging_rejects_pending_target_overlap_without_losing_queue(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    rack_id = session.project.racks[0].rack_id
+    device_a = next(
+        item for item in session.project.devices if item.display_text == "设备 A"
+    )
+    device_b = next(
+        item for item in session.project.devices if item.display_text == "设备 B"
+    )
+    session.stage_move(device_a.device_id, rack_id, 11, 11)
+
+    rejected = session.stage_move(device_b.device_id, rack_id, 11, 11)
+
+    assert any(item.code == "plan-target-overlap" for item in rejected.conflicts)
+    assert [item.device_id for item in session.pending_moves] == [device_a.device_id]
+
+
+def test_two_pending_moves_commit_in_one_safe_sync(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    rack_id = session.project.racks[0].rack_id
+    devices = {item.display_text: item for item in session.project.devices}
+    session.stage_move(devices["设备 A"].device_id, rack_id, 11, 11)
+    session.stage_move(devices["设备 B"].device_id, rack_id, 8, 8)
+
+    result = session.apply_pending_moves()
+
+    assert result.status == "applied"
+    assert len(result.plan.actions) == 2
+    assert result.backup_path is not None
+    assert not session.pending_moves
+
+
+def test_device_page_is_searchable_and_capped_at_one_hundred(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        devices=[
+            Device(device_id=f"device-{index}", display_text=f"设备 {index}")
+            for index in range(110)
+        ],
+        placements=[],
+        mappings=[],
+    )
+
+    rows, total = session.device_page(limit=100)
+    matches, match_total = session.device_page("设备 109")
+
+    assert total == 110
+    assert len(rows) == 100
+    assert match_total == 1
+    assert matches[0]["primary_label"] == "设备 109"
 
 
 def test_session_move_can_reopen_export_and_restore_atomically(tmp_path: Path) -> None:
@@ -126,6 +304,154 @@ def test_session_ambiguous_rescan_keeps_memory_and_database_unchanged(
         for item in session.last_rescan_conflicts
     )
     assert load_project(session.database_path).to_dict() == original_project.to_dict()
+
+
+def _make_sorted_layout(path: Path, *, multiline: bool = False) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "机柜"
+    sheet.merge_cells("A1:C1")
+    sheet["A1"] = "RACK-B"
+    _fill_descending_axis(sheet, 1, 2, 12)
+    _fill_descending_axis(sheet, 3, 2, 12)
+    sheet["B2"] = "交换机\n核心\n管理口" if multiline else "设备 A"
+    sheet["B5"] = "设备 B"
+    sheet.merge_cells("E1:G1")
+    sheet["E1"] = "RACK-A"
+    _fill_descending_axis(sheet, 5, 2, 12)
+    _fill_descending_axis(sheet, 7, 2, 12)
+    sheet["F2"] = "设备 C"
+    sheet["F3"] = "设备 D"
+    sheet["F4"] = "设备 E"
+    workbook.save(path)
+
+
+def test_session_preserves_multiline_device_text(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path, multiline=True)
+    session = GuiSession.open_workbook(path)
+
+    device = next(row for row in session.device_rows() if "交换机" in str(row["display_text"]))
+    assert device["display_text"] == "交换机\n核心\n管理口"
+    rack_id = str(device["rack_id"])
+    segment = next(
+        item for item in session.occupancy_segments(rack_id) if item["device_id"] == device["device_id"]
+    )
+    assert segment["display_text"] == "交换机\n核心\n管理口"
+
+
+def test_rack_rows_sort_by_source_name_and_occupancy(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path)
+    session = GuiSession.open_workbook(path)
+
+    source_names = [row["rack_name"] for row in session.rack_rows("source")]
+    name_order = [row["rack_name"] for row in session.rack_rows("name")]
+    occupancy = session.rack_rows("occupancy")
+
+    assert source_names[0] == "RACK-B"
+    assert name_order[0] == "RACK-A"
+    assert occupancy[0]["rack_name"] == "RACK-A"
+    assert occupancy[0]["occupancy_percent"] >= occupancy[1]["occupancy_percent"]
+
+
+def test_device_page_filters_and_sorts(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path)
+    session = GuiSession.open_workbook(path)
+    rack_a = next(row for row in session.rack_rows() if row["rack_name"] == "RACK-A")
+
+    rows, total = session.device_page(rack_id=str(rack_a["rack_id"]), sort_by="name")
+    by_name = [row["primary_label"] for row in rows]
+    _, active_total = session.device_page(status_filter="active")
+    _, one_u_total = session.device_page(height_filter="1u")
+
+    assert total == 3
+    assert by_name == sorted(by_name)
+    assert active_total == 5
+    assert one_u_total == 5
+
+
+def test_issue_rows_group_similar_items_in_chinese(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        conflicts=[
+            IdentityConflict(
+                code="unresolved-u-axis",
+                severity="warning",
+                message="U axis at column 9 has no title",
+                evidence=["机柜!I2:I13"],
+            ),
+            IdentityConflict(
+                code="unresolved-u-axis",
+                severity="warning",
+                message="U axis at column 12 has no title",
+                evidence=["机柜!L2:L13"],
+            ),
+            IdentityConflict(
+                code="target-u-occupied",
+                severity="error",
+                message="Target U is occupied",
+            ),
+        ],
+    )
+
+    rows = session.issue_rows()
+    titles = [row["title"] for row in rows]
+
+    assert any("2 处" in title for title in titles)
+    assert all("unresolved-u-axis" not in row["title"] for row in rows)
+    assert all("Target U" not in row["guidance"] for row in rows)
+    grouped = next(row for row in rows if "2 处" in row["title"])
+    assert "unresolved-u-axis" in grouped["technical_detail"]
+    assert "重新扫描" in grouped["guidance"]
+    assert grouped["location"] == "机柜 · I2:I13\n机柜 · L2:L13"
+
+
+def test_issue_rows_show_every_source_cell_in_one_analyzer_issue(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_layout(path)
+    session = GuiSession.open_workbook(path)
+    session.project = replace(
+        session.project,
+        conflicts=[
+            IdentityConflict(
+                code="duplicate-rack-title",
+                severity="warning",
+                message="Rack title appears in multiple candidate ranges",
+                evidence=["机柜!A1:C1", "机柜!E1:G1"],
+            )
+        ],
+    )
+
+    row = session.issue_rows()[0]
+
+    assert row["count"] == 2
+    assert row["locations"] == ["机柜 · A1:C1", "机柜 · E1:G1"]
+    assert "2 处" in row["title"]
+
+
+def test_overview_sheet_uses_readonly_scan_layout(tmp_path: Path) -> None:
+    path = tmp_path / "layout.xlsx"
+    _make_sorted_layout(path, multiline=True)
+    session = GuiSession.open_workbook(path)
+
+    names = session.overview_sheet_names()
+    sheet = session.overview_sheet(names[0])
+    device_texts = [
+        str(device["display_text"])
+        for rack in sheet["racks"]
+        for device in rack["devices"]
+    ]
+
+    assert names == ["机柜"]
+    assert {rack["rack_name"] for rack in sheet["racks"]} == {"RACK-A", "RACK-B"}
+    assert "交换机\n核心\n管理口" in device_texts
+    assert all("source_bounds" in device for rack in sheet["racks"] for device in rack["devices"])
 
 
 def test_session_database_failure_does_not_adopt_half_written_state(

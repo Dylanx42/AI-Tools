@@ -6,7 +6,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from racktool.core import analyze_workbook, scan_workbook
+from racktool.core import analyze_workbook, export_project_workbook, scan_workbook
 from racktool.core.service import (
     commit_write_plan,
     import_project,
@@ -90,6 +90,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="apply the write-back after backup, temporary write, reload, and validation",
     )
+    export_parser = subparsers.add_parser(
+        "export", help="export a project as rack diagram and device position sheets"
+    )
+    export_parser.add_argument("database", type=Path)
+    export_parser.add_argument("output", type=Path)
+    export_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing export after explicit confirmation",
+    )
     gui_parser = subparsers.add_parser("gui", help="open the local RackTool cockpit")
     gui_parser.add_argument("workbook", type=Path, nargs="?")
     return parser
@@ -117,6 +127,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _project_command(args)
         if args.command == "sync":
             return _sync_command(args)
+        if args.command == "export":
+            project = load_project_state(args.database)
+            output = export_project_workbook(project, args.output, overwrite=args.force)
+            print(
+                json.dumps(
+                    {"status": "exported", "output": str(output)},
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
         if args.command == "gui":
             from racktool.gui.window import launch
 
