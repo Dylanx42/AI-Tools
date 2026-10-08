@@ -89,3 +89,17 @@ codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
 - 当前仅显示一个 Codex 额度桶的主/次窗口。
 - 不包含自动更新器、开机自启或多 Provider 支持。
 - Bundle 为本机构建；仓库本身不提供 Apple 公证产物。
+
+## 维护交接（2026-10-08）
+
+当前源码版本为 **0.5.6 / Build 17**；折线连接和悬停修复见 [CHANGELOG.md](CHANGELOG.md) 与 [PR #14](https://github.com/Dylanx42/AI-Tools/pull/14)。后续维护从最新 `origin/main`、本 README 和变更记录开始，不需要先翻阅旧会话。
+
+此前本地开发会话记录了 macOS 上的 `plutil` 检查、构建、签名验证通过，并安装了该版本。此次云端交接核对了源码、版本和说明；Linux 环境没有重新进行 macOS 编译或安装，也没有完成下面的人工验收：
+
+- 将鼠标移入绘图区，确认定位线出现；横向移动时，对应最近的真实采样时间与两种窗口额度。
+- 确认首个采样点、重置点、长时间间隔和缺失值附近的提示内容正确，移出绘图区后定位线消失。
+- 确认重置处保留空心圆，折线持续连接；浅色和深色外观下提示均可读。
+
+这个工具按个人自用维护：云端可以改代码、审查和同步仓库；构建、安装及菜单栏交互验收在 Mac 上完成。每次修复把版本、触发条件、行为变化和验证结果写入仓库，再归档完成的会话。
+
+本地趋势历史 `~/Library/Application Support/CodexQuotaBar/quota-history.csv` 和 `/Applications/Codex 额度栏.app` 不进入 Git。代码同步或会话归档不会把它们迁到云端；换 Mac 时若要保留趋势，另行备份该 CSV。
