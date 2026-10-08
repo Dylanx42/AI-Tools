@@ -24,12 +24,24 @@ Do not treat a local dirty worktree, a RackTool feature branch, or a previous Co
 5. Make the smallest change that satisfies the request.
 6. Validate using the target project's commands below.
 7. Commit only the intended files.
-8. `git fetch origin` again. If `origin/main` moved, rebase onto it.
+8. `git fetch origin` again. If `origin/main` moved, rebase an unpublished branch onto it. For an already published branch, merge latest `origin/main` normally; do not force-push to rewrite shared history.
 9. Push the feature branch and open a PR into `main`.
 10. If the user asked to land the change, squash-merge that PR and delete the feature branch. Do not merge unrelated PRs.
 11. Verify `origin/main` contains the expected files, then leave a clean result.
 
 Never commit directly to `main` from a mixed local checkout. Never use force-push unless the user explicitly asks for that exact recovery.
+
+## Maintenance records and chat lifecycle
+
+- Current remote code, project README, changelog/update notes, accepted ADRs and regression tests are the durable project memory. Chat history is supporting evidence, not the default source of truth.
+- Before closing a fix, record the original trigger, resulting behavior, validation evidence and remaining work in the project's existing changelog/update notes or README. Record material design decisions in ADRs.
+- Label historical validation with its date/platform. Do not present a previous Mac build, installed app, hardware connection or manual check as freshly verified by a cloud task.
+- Distinguish pushed feature code from merged `main`, and automated checks from manual acceptance. Report actual remote outcomes and pending platform checks.
+- Start a new bug task from latest `origin/main` and read current project records. Read old chats only when reproduction, decisions or acceptance evidence have not been captured elsewhere.
+- Keep one ongoing planning chat per active project; use separate bounded tasks/worktrees for independent changes and a local acceptance chat when physical devices or desktop apps are needed.
+- Before archiving a completed chat, verify code/decisions are saved, unfinished work is recorded, and no unique unpushed commits, dirty files or unbacked-up private assets depend on its worktree. Archiving may clean managed worktrees while retaining snapshots.
+- Prefer reversible archiving. Permanently delete chats only when explicitly requested and preservation has been verified. Never remove Mac worktrees, installed apps, runtime CSVs, BLE setup, SQLite or private samples as a side effect of chat organization.
+- If desktop chat tools cannot reach the host, complete unaffected repository work and report chat actions as pending; do not claim an archive, rename or deletion succeeded without a tool result.
 
 ## Branch and PR rules
 
