@@ -53,6 +53,7 @@ src/racktool/
 │   ├── extractor.py
 │   ├── mapper.py
 │   ├── validator.py
+│   ├── export.py
 │   ├── sync.py
 │   └── backup.py
 │
@@ -134,6 +135,25 @@ RackCore Validate
  ↓
 重新解析
 ```
+
+### 4.4 标准 Excel 导出
+
+```text
+Structured Rack Project
+ ↓
+RackCore Exporter
+ ↓
+“机柜图” + “设备位置表”
+ ↓
+Temporary XLSX
+ ↓
+Reload + content validation
+ ↓
+Atomic replace of export target
+```
+
+标准导出生成独立工作簿，不修改绑定的源 XLSX。GUI 和 CLI 只选择目标并调用 RackCore；机柜顺序、
+U 位、换行文字、筛选表和保存后验证均由同一核心实现负责。
 
 ## 5. 为什么 RackCore 不依赖 Agent
 
@@ -230,6 +250,10 @@ SQLite 主要用于：
 - SQLite 不是必须贯穿所有 Parser 单测；
 - 核心模型应可独立序列化为 JSON；
 - 不使用服务器数据库作为 V1 前置条件。
+- GUI 默认项目状态与 Safe Sync 恢复备份进入操作系统的 RackTool 应用数据目录，不在源 Excel
+  同目录创建 `.sqlite` 或长期备份；CLI 显式项目路径不变；
+- XLSX 恢复备份最多保留 3 份、最长 30 天；SQLite 事务备份成功后立即删除，异常残留最长 7 天；
+- 清理随启动和打开项目执行，不引入常驻服务。详见 ADR-010。
 
 ## 11. 可演进边界
 
