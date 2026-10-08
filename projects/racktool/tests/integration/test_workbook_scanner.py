@@ -160,7 +160,9 @@ def test_scanner_reads_windows_backslash_ooxml_paths_without_touching_source(
     _rewrite_archive_names_with_backslashes(path)
     source_bytes = path.read_bytes()
     with ZipFile(path) as archive:
-        names = [info.filename for info in archive.infolist()]
+        # Windows normalizes ZipInfo.filename when reading; orig_filename keeps
+        # the actual ZIP entry and proves the fixture contains backslashes.
+        names = [info.orig_filename for info in archive.infolist()]
     assert names
     workbook_name = next(name for name in names if name.endswith("workbook.xml"))
     assert "/" not in workbook_name

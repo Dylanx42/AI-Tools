@@ -99,7 +99,7 @@ def test_profile_gate_modules_run_independently_in_clean_interpreter(
         "import pytest\n"
         "raise SystemExit(pytest.main([\n"
         "    '-q', '-p', 'no:cacheprovider',\n"
-        f"    '--basetemp={pytest_temp}',\n"
+        f"    {f'--basetemp={pytest_temp}'!r},\n"
         f"    '-c', {str(PROJECT_ROOT / 'pyproject.toml')!r},\n"
         f"    {str(target)!r},\n"
         "]))"
