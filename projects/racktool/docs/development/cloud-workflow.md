@@ -15,8 +15,8 @@ Microsoft Excel/WPS 和 macOS/Windows 最终桌面验收仍在对应设备执行
 | 新版来源 | `fix/racktool-gui-redesign`，[PR #7](https://github.com/Dylanx42/AI-Tools/pull/7)，尚未合并 |
 | 运行环境 | Linux x86-64，Python 3.12.14 |
 | 本地主工作区 | 已核对：`fix/racktool-gui-redesign` 的 `c925653`，无未提交改动，与云端新版 commit 完全一致 |
-| 其他本地工作区 | `codex/racktool-gui-usability` 的 `0fdffc4` 尚待核对其改动和与当前新版的包含关系 |
-| 私有 Golden 数据 | 用户准备迁入云端，当前尚未提供 |
+| 其他本地工作区 | `codex/racktool-gui-usability` 已确认干净；`0fdffc4` 不在新版祖先链中，历史补丁等价性尚未核对 |
+| 私有 Golden 数据 | 已接入两个工作区，2 个 Sheet-scoped Golden 的 Hash 和验收引用校验通过 |
 
 新版 GUI 包含页面重设计、Excel 导出、Windows 打包和后续解析修复。
 另有 `codex/racktool-gui-redesign` 旧版和 `docs/racktool-allinluna-policy` 未合并分支；
@@ -28,11 +28,13 @@ Microsoft Excel/WPS 和 macOS/Windows 最终桌面验收仍在对应设备执行
 
 | 基线 | pytest | Ruff / strict mypy / pip check / CLI |
 | --- | --- | --- |
-| 主线 + 本次迁移工具 | 109 passed, 2 skipped | PASS；另有 Qt widget + deterministic CLI smoke PASS |
-| 新版 GUI 参考 commit | 158 passed, 2 skipped | PASS；pytest 包含 Qt offscreen widget 测试 |
+| 主线 + 本次迁移工具 | 112 passed, 0 skipped | PASS；另有 Qt widget + deterministic CLI smoke PASS |
+| 新版 GUI 参考 commit | 161 passed, 0 skipped | PASS；pytest 包含 Qt offscreen widget 测试 |
 
-两项跳过均源于 Golden 数据尚未安装。这些结果不是原私有验收 112/159 passed 的重新证明。
-主线的 `check --require-private` 在缺少样本时已验证返回失败，不会静默放行。
+上述结果是在本次交接的真实私有 Golden 安装后复跑得到的；private regression 为 3 passed，
+是一个 workbook 的两类 Sheet 布局及 Profile 验证，不能解释成额外真实 workbook。
+此前未接入数据时分别为 109/158 passed + 2 skipped；本次不替代历史人工验收。
+主线 `check --gui --require-private` 已通过；此前缺少数据时也已确认该命令返回失败。
 Qt 安装后主线旧的静态导入 ignore 会触发 mypy unused-ignore；本次改成延迟模块加载，
 保留 GUI 为可选依赖，并已复跑全部检查。
 
@@ -105,7 +107,7 @@ git worktree list
 源码补丁。但输出中的本地 `origin/main` 停留在 `39f6ecb`，不能把该缓存当作 GitHub 最新主线。
 分支列表不能证明其他 worktree 干净，也不能证明未跟踪/被忽略的私有文件已同步。
 
-还需在本地仓库执行：
+本地补充核对命令：
 
 ```bash
 git -C /Users/dylan_l/.codex/worktrees/1dff/AI-Tools status --short --branch
@@ -116,6 +118,10 @@ echo "ancestor=$?"
 最后一项为 0 表示旧 GUI usability commit 已包含在当前新版中；1 表示不包含，其他值表示检查
 失败。不包含也不自动意味着缺功能：该分支可能做过 cherry-pick 或改写提交，须比较内容和未提交
 改动后再决定交接。`prunable` 是 Git 对旧 worktree 注册的标记，本次不清理或删除本地历史工作区。
+
+用户补充输出确认 GUI usability 工作区干净，ancestor=1。GitHub 无法找到 `0fdffc4`；
+当前新版历史中有同名的 `024154f` 提交，但不能只凭标题宣称补丁相同。
+当前实际使用的 `c925653` 源码已完整保留在云端；旧分支的独有历史保留在本地，未经核对不删除。
 
 ## 私有样本交接
 
@@ -146,6 +152,15 @@ python scripts/dev.py check --gui --require-private
 资产清单只是独立对账材料，不能算额外 Golden。
 私有源文件、业务内容和验收记录不进入 Git commit、PR、日志或公开测试产物。
 
+本次已接收并安装上传的 ZIP：14 个数据文件、2 个 Golden case 和 1 份验收记录。
+Mac ditto 产生的 ZIP 未设置 UTF-8 文件名标志；解包时按原 UTF-8 字节恢复中文文件名，
+跳过 `__MACOSX` 等打包元数据。未修改 workbook、expected JSON、分析结果或验收记录。
+安装前后、全部测试后均核对全部原始文件 SHA256；两个工作区均通过，且私有文件无 Git 跟踪记录。
+
+原上传包仍保留在云端附件目录，另有项目外的私有解包归档和 Hash 清单；
+两个工作区的 `samples/private/cloud-validation/` 保存本次结果和完整测试日志。
+失败详情也只保留在私有日志，公开文档/PR 仅记录验证结果，不暴露业务内容。
+
 ## SQLite、应用数据与备份
 
 先在本地退出 RackTool，再备份数据库、原始 workbook、Profile 和备份目录，保留本地原件。
@@ -158,6 +173,9 @@ Linux 的 XDG data 目录。实际位置以本地版本的 storage 实现为准�
 已有项目需要在交接后单独核对路径绑定、ID 保持和备份恢复；不要手改 SQLite 路径冒充完成。
 只读 analyze/inspect 可在样本副本上先执行。重新 project import 会产生新项目身份，
 不能替代需要保留原 device_id/rack_id 的迁移。
+
+本次样本包不包含 SQLite 数据库。因此当前完成的是源码、开发依赖与 Golden 验证数据的交接，
+不声称已迁移本地 GUI 保存的业务项目状态或原 device_id/rack_id。
 
 ## 每个云端任务的收口
 
