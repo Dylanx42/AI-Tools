@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,9 @@ from racktool.gui.session import GuiSession
 
 def _require_qt() -> tuple[Any, Any, Any]:
     try:
-        from PySide6 import QtCore, QtGui, QtWidgets
+        QtCore = import_module("PySide6.QtCore")
+        QtGui = import_module("PySide6.QtGui")
+        QtWidgets = import_module("PySide6.QtWidgets")
     except ImportError as error:
         raise RuntimeError(
             "RackTool GUI requires PySide6. Install it with: pip install 'racktool[gui]'"

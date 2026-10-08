@@ -1,0 +1,45 @@
+name: RackTool checks
+
+on:
+  pull_request:
+    paths:
+      - "projects/racktool/**"
+      - ".github/workflows/racktool-checks.yml"
+  push:
+    branches: [main]
+    paths:
+      - "projects/racktool/**"
+      - ".github/workflows/racktool-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.11"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: projects/racktool
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install isolated development environment
+        run: python scripts/dev.py setup --gui
+      - name: Check public regression, types and Qt widgets
+        run: python scripts/dev.py check --gui
