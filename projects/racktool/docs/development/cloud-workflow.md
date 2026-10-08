@@ -4,48 +4,85 @@
 RackTool 本身继续离线可用；云端开发不增加产品云服务或 Agent 运行时依赖。
 Microsoft Excel/WPS 和 macOS/Windows 最终桌面验收仍在对应设备执行。
 
-## 当前迁移基线（2026-10-08）
+## 当前开发基线（2026-10-08）
 
-| 内容 | 云端位置/状态 |
+正式代码以 `Dylanx42/AI-Tools` 的最新 `origin/main` 为准。新版 GUI、Excel 导出、
+受管理的项目存储、Windows 打包及后续解析修复已通过 [PR #7](https://github.com/Dylanx42/AI-Tools/pull/7)
+合入主线；其来源 `c925653` 与已确认的 Mac 主工作区源码一致。云端工具适配这套新版，
+后续不再在旧主线和新版 GUI 两个工作区之间来回选择。
+
+| 内容 | 位置/状态 |
 | --- | --- |
-| 正式仓库 | `Dylanx42/AI-Tools`，`origin/main` |
-| 迁移开发工作区 | `/workspace/racktool-cloud`，`feat/racktool-cloud-workflow` |
-| 已拉取主线 | `037f05a590cf585eff2e3ba0a9c7325e0f17c3e3` |
-| 新版 GUI 工作区 | `/workspace/racktool-gui-reference`，`feat/racktool-cloud-gui`，`c925653858683f2cebcd8060749f2990afe3141a` |
-| 新版来源 | `fix/racktool-gui-redesign`，[PR #7](https://github.com/Dylanx42/AI-Tools/pull/7)，尚未合并 |
-| 运行环境 | Linux x86-64，Python 3.12.14 |
-| 本地主工作区 | 已核对：`fix/racktool-gui-redesign` 的 `c925653`，无未提交改动，与云端新版 commit 完全一致 |
-| 其他本地工作区 | `codex/racktool-gui-usability` 已确认干净；`0fdffc4` 不在新版祖先链中，历史补丁等价性尚未核对 |
-| 私有 Golden 数据 | 已接入两个工作区，2 个 Sheet-scoped Golden 的 Hash 和验收引用校验通过 |
+| 主仓库 checkout | `/workspace/AI-Tools`，开工先 fetch；不在混合 checkout 直接提交 main |
+| 本轮云端工作区 | `/workspace/racktool-cloud`；任务分支合并后仅作本轮参考 |
+| 原新版参考工作区 | `/workspace/racktool-gui-reference`；保留比较，不作为新任务基础 |
+| 云端环境 | Linux x86-64，Python 3.12.14，Qt 6.11.2 |
+| 本地主工作区 | 历史核对为 `c925653`、无未提交改动；新主线合并后由本地 Agent 再同步 |
+| 其他本地工作区 | `codex/racktool-gui-usability` 干净，但 `0fdffc4` 补丁等价性未核对，继续保留 |
+| 私有样本 | 14 个原始数据文件，两个 Sheet-scoped Golden 和一份验收记录，Hash 未变 |
 
-新版 GUI 包含页面重设计、Excel 导出、Windows 打包和后续解析修复。
-另有 `codex/racktool-gui-redesign` 旧版和 `docs/racktool-allinluna-policy` 未合并分支；
-这些分支不是正式主线。本地终端输出已确认实际使用新版 GUI；云端已为同一 commit
-建立可继续工作的分支，保留主线工具工作区用于独立比较，不合并旧 PR，也不改变其模型策略。
-下一次源码任务仍按根 AGENTS.md 从最新主线建立任务分支，再审查/整合这份已确认的新版成果。
+整合后的云端检查：`python scripts/dev.py check --gui --require-private`。
+本轮 pytest **161 passed、0 skipped**，Ruff / strict mypy / pip check / CLI / 新版 Qt
+widget 冒烟通过。私人回归为一个 workbook 的两类 Sheet 布局和 Profile 验证，
+不能把测试数量解释成额外真实 workbook。公开 CI 不持有私有数据，相应测试明确跳过。
 
-本次云端复跑结果（两个工作区分别拥有自己的 `.venv`，使用同一依赖清单）：
+仓库新增 `RackTool checks`：Linux Python 3.11/3.12，以及 macOS/Windows Python 3.11
+运行同一个公开检查入口。既有 Windows package 工作流负责便携打包。
+工作流配置已落库不等于托管 runner 已通过；以 GitHub Actions 对应 commit 的实际结果为准。
+桌面、Excel/WPS 和 Windows ARM 实机验收继续单独记录。
 
-| 基线 | pytest | Ruff / strict mypy / pip check / CLI |
-| --- | --- | --- |
-| 主线 + 本次迁移工具 | 112 passed, 0 skipped | PASS；另有 Qt widget + deterministic CLI smoke PASS |
-| 新版 GUI 参考 commit | 161 passed, 0 skipped | PASS；pytest 包含 Qt offscreen widget 测试 |
+`docs/racktool-allinluna-policy` 等历史未合并分支不是正式代码或模型策略，本次不合并。
+本地 GUI 的 SQLite 业务项目状态未在上传包中，尚未迁移；详见下文。
 
-上述结果是在本次交接的真实私有 Golden 安装后复跑得到的；private regression 为 3 passed，
-是一个 workbook 的两类 Sheet 布局及 Profile 验证，不能解释成额外真实 workbook。
-此前未接入数据时分别为 109/158 passed + 2 skipped；本次不替代历史人工验收。
-主线 `check --gui --require-private` 已通过；此前缺少数据时也已确认该命令返回失败。
-Qt 安装后主线旧的静态导入 ignore 会触发 mypy unused-ignore；本次改成延迟模块加载，
-保留 GUI 为可选依赖，并已复跑全部检查。
+## 后续开发流程规范
 
-新版参考环境的复跑命令（从其 `projects/racktool` 执行）：
+### 用户如何提出任务
 
-```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -ra
-.venv/bin/python -m ruff check .
-.venv/bin/python -m mypy src
-.venv/bin/python -m pip check
-```
+在云端总控会话说明“哪个项目、想达到什么结果”。修 Bug 时补充应用版本、操作步骤、
+预期/实际结果和截图或文件；已有信息足够时 Agent 自行核对仓库，不要求用户重复整理 Git。
+不按模型名（例如 Grok）划分项目，也不把历史聊天当开发文档。
+
+保留一个 `RackTool｜云端总控` 会话用于计划与汇总；需要实机操作时使用一个
+`RackTool｜本地验收` 会话。并行功能各用独立任务分支和工作区；Agent 子任务由总控汇总。
+一个功能完成即收口，不长期复用旧功能会话做无关改动。
+额度栏和 WF610 是个人维护工具，有新问题时按项目另开任务即可。
+
+### Agent 开工、实施、交付
+
+1. **开工**：fetch 最新 main，读根/项目 README 和 AGENTS；查状态、分支、worktree、
+   相关 PR 与已知待办。从最新 main 建独立任务分支，先复现再修改。
+2. **实施**：一次 PR 只处理一个项目的一个明确目标；解析 Bug 添加最小回归样本；
+   变更不越过 RackCore、离线运行及 Excel 安全写回边界。并行 Agent 不同时改同一核心模块。
+3. **验证与记录**：运行统一检查，私有数据已安装时加 `--require-private`。
+   同步项目修复记录/当前状态，写清问题、最终行为、复现或回归检查、验收结果和未完成项。
+   设计变化写 ADR。失败业务详情仅留私有日志。
+4. **落地**：只提交预期文件，push、开 PR、审查后按用户授权 squash 合入 main，
+   删除已合并的远端任务分支。已发布分支同步新 main 使用普通 merge，禁止未经授权 forcepush。
+5. **收口**：fetch 验证 main 包含预期代码和文档；报告 PR、测试、人工待办及干净工作区状态。
+   “已同步远端功能分支”和“已合入 main”必须分别说明，不能把前者当作正式交付。
+
+新 Bug 默认读取当前代码、README、修复记录、相关测试及近期 PR；只有存在未落库的决策、
+复现材料或验收证据时才回看旧会话。不要求逐一阅读所有历史聊天。
+
+### 归档与清理
+
+归档前确认源码已合入 main，决策和未完成项写入文档，没有独有的未推 commit、脏文件或
+未备份私有数据；重要实机证据可在项目记录中摘要，并注明其历史时间和当前未复验状态。
+已完成会话优先归档，可恢复；有未交接内容的会话保留并注明待办。
+
+会话归档可能触发 Codex 对托管 worktree 的清理与快照保留，因此不能承诺文件永远不受影响。
+不要顺手删除 Mac 历史 worktree、`~/WF610`、已安装 App、运行数据、SQLite 或私有验收附件。
+永久删除只用于已经核清且用户明确要求的会话；接口不支持时如实报告已归档或未处理。
+
+### 下一阶段按顺序推进
+
+1. **稳定 V0.5 Beta**：在 Mac、Windows x86-64 的副本上完成打开、总览/机柜/设备操作、
+   搜索、移动预览、安全同步、导出、关闭重启和备份恢复；Excel/WPS 检查导出样式与打印。
+   Windows ARM 为兼容快测，不能替代 x86-64 验收。把每项结果与待修问题写入 gate。
+2. **未知布局工作流**：遵循 ROADMAP/相关 ADR，先做 Analysis Package、候选 Profile、
+   validate/dry-run 与置信度确认，保持既有 Golden 不回退。
+3. **Skill 和后续编辑能力**：确定性能力先在 RackCore/CLI 验证，再接 GUI 或 Skill。
+   Skill 不直接写 Excel，不把 Agent 运行时嵌进本地 App。每次任务再核对路线图，不提前扩大范围。
 
 ## 新建云端环境
 
@@ -164,7 +201,7 @@ Mac ditto 产生的 ZIP 未设置 UTF-8 文件名标志；解包时按原 UTF-8 
 ## SQLite、应用数据与备份
 
 先在本地退出 RackTool，再备份数据库、原始 workbook、Profile 和备份目录，保留本地原件。
-主线旧 GUI 默认在工作簿旁保存数据库；新版 GUI 使用应用数据目录：
+历史旧 GUI 默认在工作簿旁保存数据库；当前主线新版 GUI 使用应用数据目录：
 macOS `~/Library/Application Support/RackTool`，Windows `%LOCALAPPDATA%/RackTool`，
 Linux 的 XDG data 目录。实际位置以本地版本的 storage 实现为准。
 

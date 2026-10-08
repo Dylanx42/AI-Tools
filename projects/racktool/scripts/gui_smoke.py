@@ -22,6 +22,7 @@ def main() -> None:
         root = Path(directory)
         os.environ["XDG_CACHE_HOME"] = directory
         os.environ["XDG_RUNTIME_DIR"] = directory
+        os.environ["XDG_DATA_HOME"] = directory
         path = root / "synthetic.xlsx"
         workbook = Workbook()
         sheet = workbook.active
@@ -48,14 +49,21 @@ def main() -> None:
         cockpit.widget().show()
         app.processEvents()
         assert cockpit.device_table.rowCount() == 2
-        assert cockpit.rack_table.rowCount() == 1
-        assert cockpit.mapping_table.rowCount() > 0
-        cockpit.rack_table.selectRow(0)
+        assert cockpit.content_stack.count() == 4
+        assert cockpit.rack_list.count() == 1
+        assert cockpit.rack_scene.items()
+        cockpit.rack_list.setCurrentRow(0)
         cockpit.device_table.selectRow(0)
         app.processEvents()
-        assert cockpit.occupancy_table.rowCount() == 12
-        assert cockpit.rack_box.currentData() == session.project.racks[0].rack_id
-        assert cockpit.start_u.value() in (9, 12)
+        cockpit.move_button.click()
+        app.processEvents()
+        assert cockpit.move_drawer.isVisible()
+        assert cockpit.target_rack_box.currentData() == session.project.racks[0].rack_id
+        assert cockpit.target_start_u.value() in (9, 12)
+        cockpit.search_box.setText("SYNTHETIC-B")
+        app.processEvents()
+        assert cockpit.device_table.rowCount() == 1
+        assert "SYNTHETIC-B" in cockpit.device_table.item(0, 0).text()
         cockpit.widget().close()
         app.processEvents()
         assert hashlib.sha256(path.read_bytes()).hexdigest() == original_hash

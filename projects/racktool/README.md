@@ -33,7 +33,8 @@ Profile 只描述布局规则，不保存设备业务数据。错误、冲突或
 候选结果保留置信度和 evidence，**不等于人工确认的业务真值**。重复标题、错误名称、忽略标签、
 颜色语义和资产表对账仍需单独验证；synthetic fixture 也不构成真实格式兼容性的证据。
 
-当前完整套件为 159 passed；PySide6 headless 和真实私有工作簿副本的 macOS native launch 已完成。
+2026-10-08 云端复跑完整套件为 161 passed、0 skipped（已安装两个真实私有 Sheet Golden）；
+Ruff、strict mypy 和新版 Qt offscreen 冒烟检查通过。历史 macOS native launch 已完成。
 新版 macOS GUI 用户验收、Windows GUI 检查，以及 Microsoft Excel/WPS 实机打开和写回仍为
 **MANUAL VALIDATION PENDING**，不能由自动化或启动成功替代。
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
@@ -59,7 +60,7 @@ x86-64，Windows ARM 可尝试使用系统的 x64 兼容层，但 ARM 原生 GUI
 
 ## 安装与验证
 
-云端主开发入口见 [云端开发与本地交接](docs/development/cloud-workflow.md)。新云端电脑可以从
+云端主开发及后续流程规范见 [云端开发与本地交接](docs/development/cloud-workflow.md)。新云端电脑可以从
 项目目录运行 `python scripts/dev.py setup --gui`，然后用
 `python scripts/dev.py check --gui` 完成公开自动化检查和 Qt offscreen 冒烟验证。
 真实 Golden 数据接入后，增加 `--require-private`；私有样本与人工验收结果不能由公开测试替代。
