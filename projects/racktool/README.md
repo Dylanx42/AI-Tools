@@ -39,6 +39,7 @@ Ruff、strict mypy 和新版 Qt offscreen 冒烟检查通过。历史 macOS nati
 **MANUAL VALIDATION PENDING**，不能由自动化或启动成功替代。
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
 本轮功能与验证摘要见 [2026-09-16 进度更新](docs/updates/2026-09-16.md)。
+云端整合与跨平台检查记录见 [2026-10-08 开发交接](docs/updates/2026-10-08.md)。
 
 ## Windows 便携版（同事测试）
 

@@ -13,7 +13,7 @@ Microsoft Excel/WPS 和 macOS/Windows 最终桌面验收仍在对应设备执行
 
 | 内容 | 位置/状态 |
 | --- | --- |
-| 主仓库 checkout | `/workspace/AI-Tools`，开工先 fetch；不在混合 checkout 直接提交 main |
+| 主仓库 checkout | `/workspace/AI-Tools`，已安装独立 `.venv` 与校验后的私有样本；开工先 fetch |
 | 本轮云端工作区 | `/workspace/racktool-cloud`；任务分支合并后仅作本轮参考 |
 | 原新版参考工作区 | `/workspace/racktool-gui-reference`；保留比较，不作为新任务基础 |
 | 云端环境 | Linux x86-64，Python 3.12.14，Qt 6.11.2 |
@@ -88,6 +88,8 @@ widget 冒烟通过。私人回归为一个 workbook 的两类 Sheet 布局和 P
 
 准备 Git、Python 3.11+ 和 venv；本次固定依赖在 Python 3.12 / Linux 上验证。
 保持云端平台提供的代理和 CA 设置。访问 GitHub、PyPI、包下载站需要环境允许对应网络目的地。
+最小 Linux 镜像运行 Qt offscreen 仍需系统图形库；Ubuntu/Debian 安装 `libegl1`、
+`libopengl0` 后再执行 GUI 检查。GitHub Linux runner 在工作流中自动安装这些包。
 
 ```bash
 git clone https://github.com/Dylanx42/AI-Tools.git
