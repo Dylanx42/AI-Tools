@@ -11,17 +11,18 @@ Microsoft Excel/WPS 和 macOS/Windows 最终桌面验收仍在对应设备执行
 | 正式仓库 | `Dylanx42/AI-Tools`，`origin/main` |
 | 迁移开发工作区 | `/workspace/racktool-cloud`，`feat/racktool-cloud-workflow` |
 | 已拉取主线 | `037f05a590cf585eff2e3ba0a9c7325e0f17c3e3` |
-| 新版 GUI 参考工作区 | `/workspace/racktool-gui-reference`，detached `c925653858683f2cebcd8060749f2990afe3141a` |
+| 新版 GUI 工作区 | `/workspace/racktool-gui-reference`，`feat/racktool-cloud-gui`，`c925653858683f2cebcd8060749f2990afe3141a` |
 | 新版来源 | `fix/racktool-gui-redesign`，[PR #7](https://github.com/Dylanx42/AI-Tools/pull/7)，尚未合并 |
 | 运行环境 | Linux x86-64，Python 3.12.14 |
-| 本地未推送代码 | 用户确认存在，等待本地状态和文件交接 |
+| 本地主工作区 | 已核对：`fix/racktool-gui-redesign` 的 `c925653`，无未提交改动，与云端新版 commit 完全一致 |
+| 其他本地工作区 | `codex/racktool-gui-usability` 的 `0fdffc4` 尚待核对其改动和与当前新版的包含关系 |
 | 私有 Golden 数据 | 用户准备迁入云端，当前尚未提供 |
 
 新版 GUI 包含页面重设计、Excel 导出、Windows 打包和后续解析修复。
 另有 `codex/racktool-gui-redesign` 旧版和 `docs/racktool-allinluna-policy` 未合并分支；
-这些分支不是正式主线。本次不替用户选择本地版本，不合并旧 PR，也不改变其模型策略。
-参考工作区用于比较；需要开发该版本时从最新主线建立独立分支，再审查/整合指定成果。
-不要在 detached 工作区直接开始提交。
+这些分支不是正式主线。本地终端输出已确认实际使用新版 GUI；云端已为同一 commit
+建立可继续工作的分支，保留主线工具工作区用于独立比较，不合并旧 PR，也不改变其模型策略。
+下一次源码任务仍按根 AGENTS.md 从最新主线建立任务分支，再审查/整合这份已确认的新版成果。
 
 本次云端复跑结果（两个工作区分别拥有自己的 `.venv`，使用同一依赖清单）：
 
@@ -99,6 +100,22 @@ git worktree list
 无法推送时交接相应源码文件和补丁，并保留基础 commit 信息。
 不上传 `.git`、`.venv`、应用安装包、登录配置、令牌或其他项目的文件。
 不得删除、reset 或 stash 本地改动来让工作区看起来干净。
+
+本次收到的输出确认主工作区干净，HEAD 与其 origin 分支均为 `c925653`，无需交接该工作区的
+源码补丁。但输出中的本地 `origin/main` 停留在 `39f6ecb`，不能把该缓存当作 GitHub 最新主线。
+分支列表不能证明其他 worktree 干净，也不能证明未跟踪/被忽略的私有文件已同步。
+
+还需在本地仓库执行：
+
+```bash
+git -C /Users/dylan_l/.codex/worktrees/1dff/AI-Tools status --short --branch
+git merge-base --is-ancestor 0fdffc4 HEAD
+echo "ancestor=$?"
+```
+
+最后一项为 0 表示旧 GUI usability commit 已包含在当前新版中；1 表示不包含，其他值表示检查
+失败。不包含也不自动意味着缺功能：该分支可能做过 cherry-pick 或改写提交，须比较内容和未提交
+改动后再决定交接。`prunable` 是 Git 对旧 worktree 注册的标记，本次不清理或删除本地历史工作区。
 
 ## 私有样本交接
 
