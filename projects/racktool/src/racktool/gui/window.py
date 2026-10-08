@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,7 @@ from racktool.gui.session import GuiSession, default_database_path
 
 def _require_qt() -> Any:
     try:
-        from PySide6 import QtWidgets  # type: ignore[import-not-found]
+        QtWidgets = import_module("PySide6.QtWidgets")
     except ImportError as error:
         raise RuntimeError(
             "RackTool GUI requires PySide6. Install it with: pip install 'racktool[gui]'"

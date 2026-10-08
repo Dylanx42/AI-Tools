@@ -28,6 +28,11 @@ macOS/Windows GUI 人工检查均为 **MANUAL VALIDATION PENDING**，不能由 h
 
 ## 安装与验证
 
+云端主开发入口见 [云端开发与本地交接](docs/development/cloud-workflow.md)。新云端电脑可以从
+项目目录运行 `python scripts/dev.py setup --gui`，然后用
+`python scripts/dev.py check --gui` 完成公开自动化检查和 Qt offscreen 冒烟验证。
+真实 Golden 数据接入后，增加 `--require-private`；私有样本与人工验收结果不能由公开测试替代。
+
 需要 Python 3.11 或更高版本：
 
 ```bash
