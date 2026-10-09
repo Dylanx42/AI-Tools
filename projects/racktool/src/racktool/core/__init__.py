@@ -14,6 +14,7 @@ from racktool.core.sync import (
     plan_device_move,
     plan_device_moves,
 )
+from racktool.core.templates import create_empty_rack_project
 from racktool.core.workbook import scan_workbook
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "analyze_workbook",
     "apply_writeback",
     "commit_write_plan",
+    "create_empty_rack_project",
     "export_project_workbook",
     "import_project",
     "import_workbook",
