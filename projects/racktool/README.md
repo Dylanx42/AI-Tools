@@ -18,6 +18,9 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 - 由 RackCore 生成含“机柜图”和“设备位置表”的独立 Excel 导出，按源工作表的机柜行列关系排布、
   保留多行文字和完整设备框线，设备表可筛选。
 
+标准导出的每个 U 位只有一个宽设备单元格，两侧保留 U 标尺；多 U 设备在同一设备列内纵向合并。
+空机柜模板也复用这个 RackCore 导出模块，生成方式见下文。
+
 底层 Reader 当前能够：
 
 - 按原始顺序列出工作表；
@@ -40,6 +43,7 @@ Ruff、strict mypy 和新版 Qt offscreen 冒烟检查通过。历史 macOS nati
 完整证据见 [V0.5 Integrated Audit](docs/gates/V0.5-integrated-audit.md)。
 本轮功能与验证摘要见 [2026-09-16 进度更新](docs/updates/2026-09-16.md)。
 云端整合与跨平台检查记录见 [2026-10-08 开发交接](docs/updates/2026-10-08.md)。
+单格导出与空模板统一记录见 [2026-10-09 导出优化](docs/updates/2026-10-09.md)。
 
 ## Windows 便携版（同事测试）
 
@@ -121,6 +125,19 @@ python -m racktool analyze path/to/rack-layout.xlsx
 按照源工作表顺序和每一排的原始列顺序横向排列，不再按固定数量换行，并为合并的机柜标题和设备
 区域绘制完整外框。它通过临时文件、重载验证和原子替换生成导出文件，不写源工作簿。命令行默认不覆盖已有导出，确需覆盖时
 显式增加 `--force`；GUI 的“导出表格”由系统保存对话框确认文件名，原有 JSON 导出保留在文件菜单。
+
+## 生成空机柜表
+
+安装项目后，在项目目录运行：
+
+```bash
+python scripts/generate_empty_racks.py --count 18 --height 42 --output /path/to/empty-racks.xlsx
+```
+
+这会生成 A01–A18、B01–B18 两排共 36 个空机柜，每柜 42U，以及空的设备位置表。
+`--count` 控制每排数量（1–99），`--height` 控制高度（1–100U）；已有输出文件默认拒绝覆盖，
+确需替换时增加 `--overwrite`。脚本仅创建空项目并调用正式导出，不读取已有业务工作簿；设备格、
+标尺、边框和保存验证均由 RackCore 统一处理。
 
 ## 明确不支持
 

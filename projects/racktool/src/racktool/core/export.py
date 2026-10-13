@@ -37,7 +37,7 @@ _POSITION_HEADERS = (
     "设备 ID",
     "机柜 ID",
 )
-_RACK_BLOCK_COLUMNS = 4
+_RACK_BLOCK_COLUMNS = 3
 _RACK_GUTTER_COLUMNS = 1
 _FONT_NAME = "Arial"
 _DEVICE_FILLS = (
@@ -269,11 +269,10 @@ def _configure_rack_columns(sheet: Worksheet, rack_count: int) -> None:
     for block_index in range(rack_count):
         start_column = block_index * (_RACK_BLOCK_COLUMNS + _RACK_GUTTER_COLUMNS) + 1
         sheet.column_dimensions[get_column_letter(start_column)].width = 5
-        sheet.column_dimensions[get_column_letter(start_column + 1)].width = 15
-        sheet.column_dimensions[get_column_letter(start_column + 2)].width = 15
-        sheet.column_dimensions[get_column_letter(start_column + 3)].width = 5
+        sheet.column_dimensions[get_column_letter(start_column + 1)].width = 30
+        sheet.column_dimensions[get_column_letter(start_column + 2)].width = 5
         if block_index < rack_count - 1:
-            sheet.column_dimensions[get_column_letter(start_column + 4)].width = 2
+            sheet.column_dimensions[get_column_letter(start_column + 3)].width = 2
 
 
 def _set_outer_border(
@@ -387,13 +386,14 @@ def _render_rack_devices(
         top_row = body_start + rack.height_u - high
         bottom_row = body_start + rack.height_u - low
         left_column = start_column + 1
-        right_column = start_column + 2
-        sheet.merge_cells(
-            start_row=top_row,
-            start_column=left_column,
-            end_row=bottom_row,
-            end_column=right_column,
-        )
+        right_column = left_column
+        if top_row != bottom_row:
+            sheet.merge_cells(
+                start_row=top_row,
+                start_column=left_column,
+                end_row=bottom_row,
+                end_column=right_column,
+            )
         anchor = _cell(sheet, top_row, left_column)
         text = _normalise_display_text(device.display_text)
         _literal_text(anchor, text)

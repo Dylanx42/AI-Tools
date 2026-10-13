@@ -8,6 +8,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.cli.main import main
+from racktool.core.analyzer import analyze_workbook
 from racktool.core.export import export_project_workbook
 from racktool.gui.session import GuiSession
 
@@ -166,11 +167,11 @@ def test_export_preserves_source_rack_rows_instead_of_wrapping_every_four(
         assert top_rows != bottom_rows
         assert [coordinates[f"A{index:02d}"][1] for index in range(1, 7)] == [
             1,
-            6,
-            11,
-            16,
+            5,
+            9,
+            13,
+            17,
             21,
-            26,
         ]
         assert "每排机柜按源工作表中的行列位置排列" in str(diagram["A2"].value)
     finally:
@@ -210,6 +211,46 @@ def test_export_preserves_source_workbook_sheet_order(tmp_path: Path) -> None:
         assert group_rows["来源工作表：Z-先显示"] < group_rows["来源工作表：A-后显示"]
     finally:
         exported.close()
+
+
+def test_export_uses_one_device_column_and_round_trips_u_positions(tmp_path: Path) -> None:
+    source = tmp_path / "layout.xlsx"
+    output = tmp_path / "single-column.xlsx"
+    _make_layout(source)
+    session = GuiSession.open_workbook(source)
+
+    session.export_xlsx(output)
+
+    analysis = analyze_workbook(output)
+    diagram_analysis = next(sheet for sheet in analysis.sheets if sheet.name == "机柜图")
+    assert len(diagram_analysis.racks) == 2
+    assert all(len(rack.device_columns) == 1 for rack in diagram_analysis.racks)
+    racks = {rack.candidate_id: rack.rack_name for rack in diagram_analysis.racks}
+    devices = {device.candidate_id: device.display_text for device in diagram_analysis.devices}
+    assert {
+        (devices[p.device_candidate_id], racks[p.rack_candidate_id], p.start_u, p.end_u)
+        for p in diagram_analysis.placements
+    } == {
+        ("核心交换机\nS5735-L48T4XE\n带外管理", "RACK-A", 11, 12),
+        ("防火墙", "RACK-A", 8, 8),
+        ("应用服务器", "RACK-B", 10, 10),
+    }
+    workbook = load_workbook(output)
+    try:
+        diagram = workbook["机柜图"]
+        assert diagram.column_dimensions["B"].width == 30
+        assert diagram["B9"].value is None  # An editable, empty 10 U slot.
+        assert diagram["B9"].border.left.style == "thin"
+        assert diagram["B9"].border.right.style == "thin"
+        device_merges = [
+            merged for merged in diagram.merged_cells.ranges
+            if diagram.cell(merged.min_row, merged.min_col).value in devices.values()
+        ]
+        assert len(device_merges) == 1
+        assert device_merges[0].min_col == device_merges[0].max_col
+        assert device_merges[0].max_row - device_merges[0].min_row == 1
+    finally:
+        workbook.close()
 
 
 def test_export_draws_complete_borders_around_merged_titles_and_devices(
