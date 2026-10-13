@@ -4,11 +4,13 @@ import hashlib
 import os
 import tempfile
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.cell.cell import Cell
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -16,11 +18,14 @@ from openpyxl.worksheet.properties import PageSetupProperties
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
 
-from racktool.core.identity import normalize_path
+from racktool.core.identity import normalize_path, sha256_file
 from racktool.core.ooxml import load_xlsx_workbook
-from racktool.core.project import project_error_conflicts
+from racktool.core.project import project_error_conflicts, rescan_workbook
+from racktool.core.source_export import append_position_sheet
+from racktool.core.workbook import scan_workbook
 from racktool.models.domain import Device, Placement, Rack
 from racktool.models.project import RackProject
+from racktool.models.workbook import SheetInfo
 
 _RACK_SHEET = "机柜图"
 _POSITION_SHEET = "设备位置表"
@@ -28,11 +33,9 @@ _POSITION_HEADERS = (
     "序号",
     "设备",
     "机柜",
-    "起始 U",
-    "结束 U",
+    "U 位",
     "高度（U）",
-    "工作表",
-    "来源单元格",
+    "机房",
     "状态",
     "设备 ID",
     "机柜 ID",
@@ -76,8 +79,13 @@ class _PositionRow:
 
 @dataclass(frozen=True, slots=True)
 class _ExportManifest:
-    rack_titles: tuple[tuple[str, str], ...]
+    rack_titles: tuple[tuple[str, str, Rack], ...]
     position_rows: tuple[_PositionRow, ...]
+    sheet_names: tuple[str, ...]
+    position_sheet: str
+    source_sheets: tuple[SheetInfo, ...] = ()
+    source_metadata: tuple[str, ...] = ()
+    source_payload: bytes = b""
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,11 +212,34 @@ def _position_rows(project: RackProject) -> list[_PositionRow]:
     rows.sort(
         key=lambda row: (
             row.rack_index,
-            -(row.end_u if row.end_u is not None else -1),
+            (row.start_u if row.start_u is not None else 10**9)
+            if racks.get(row.rack_id) is not None and racks[row.rack_id].direction == "ascending"
+            else -(row.end_u if row.end_u is not None else -1),
             row.source_index,
         )
     )
     return rows
+
+
+def _u_label(row: _PositionRow) -> str:
+    if row.start_u is None or row.end_u is None:
+        return ""
+    return f"{row.start_u}U" if row.start_u == row.end_u else f"{row.start_u}-{row.end_u}U"
+
+
+def _unit_row(rack: Rack, body_start: int, unit: int) -> int:
+    return body_start + (unit - 1 if rack.direction == "ascending" else rack.height_u - unit)
+
+
+def _unique_sheet_name(workbook: Workbook, desired: str) -> str:
+    existing = {name.casefold() for name in workbook.sheetnames}
+    name = desired[:31]
+    suffix = 1
+    while name.casefold() in existing:
+        suffix += 1
+        tail = f" ({suffix})"
+        name = desired[:31 - len(tail)] + tail
+    return name
 
 
 def _active_placements(project: RackProject) -> dict[str, list[tuple[Placement, Device]]]:
@@ -358,7 +389,7 @@ def _style_rack_base(
         )
 
     for unit in range(rack.height_u, 0, -1):
-        row = body_start + rack.height_u - unit
+        row = _unit_row(rack, body_start, unit)
         for column in (start_column, end_column):
             cell = _cell(sheet, row, column)
             cell.value = unit
@@ -383,8 +414,7 @@ def _render_rack_devices(
     for placement, device in placements:
         low = min(placement.start_u, placement.end_u)
         high = max(placement.start_u, placement.end_u)
-        top_row = body_start + rack.height_u - high
-        bottom_row = body_start + rack.height_u - low
+        top_row, bottom_row = sorted((_unit_row(rack, body_start, low), _unit_row(rack, body_start, high)))
         left_column = start_column + 1
         right_column = left_column
         if top_row != bottom_row:
@@ -424,14 +454,7 @@ def _render_rack_devices(
 def _write_rack_sheet(
     workbook: Workbook,
     project: RackProject,
-) -> tuple[tuple[str, str], ...]:
-    sheet = workbook.active
-    if sheet is None:
-        raise RuntimeError("无法创建机柜图工作表。")
-    sheet.title = _RACK_SHEET
-    sheet.sheet_view.showGridLines = False
-    sheet.sheet_properties.tabColor = "4472C4"
-
+) -> tuple[tuple[str, str, Rack], ...]:
     active_racks = [rack for rack in _ordered_racks(project) if rack.status == "active"]
     placements = _active_placements(project)
     groups: dict[str, list[Rack]] = {}
@@ -440,26 +463,20 @@ def _write_rack_sheet(
     bands_by_sheet = {
         sheet_name: _rack_bands(racks) for sheet_name, racks in groups.items()
     }
-    max_racks_in_band = max(
-        (
-            len(band.racks)
-            for bands in bands_by_sheet.values()
-            for band in bands
-        ),
-        default=0,
-    )
-    diagram_max_column = _diagram_column_count(max_racks_in_band)
-    _style_diagram_header(sheet, diagram_max_column)
-    _configure_rack_columns(sheet, max_racks_in_band)
-
-    title_cells: list[tuple[str, str]] = []
-    current_row = 4
     if not groups:
-        empty_cell = _cell(sheet, current_row, 1)
-        _literal_text(empty_cell, "当前项目没有可导出的在位机柜。")
-        empty_cell.font = Font(name=_FONT_NAME, size=11, color="667085")
-        current_row += 1
+        bands_by_sheet[_RACK_SHEET] = []
+    title_cells: list[tuple[str, str, Rack]] = []
     for sheet_name, bands in bands_by_sheet.items():
+        # Drafts have virtual source names, while imported sheets represent rooms.
+        desired = sheet_name if project.source_workbook is not None else _RACK_SHEET
+        sheet = workbook.create_sheet(_unique_sheet_name(workbook, desired))
+        sheet.sheet_view.showGridLines = False
+        sheet.sheet_properties.tabColor = "4472C4"
+        max_racks_in_band = max((len(band.racks) for band in bands), default=0)
+        diagram_max_column = _diagram_column_count(max_racks_in_band)
+        _style_diagram_header(sheet, diagram_max_column)
+        _configure_rack_columns(sheet, max_racks_in_band)
+        current_row = 4
         sheet.merge_cells(
             start_row=current_row,
             start_column=1,
@@ -467,7 +484,7 @@ def _write_rack_sheet(
             end_column=diagram_max_column,
         )
         group_cell = _cell(sheet, current_row, 1)
-        _literal_text(group_cell, f"来源工作表：{sheet_name}")
+        _literal_text(group_cell, f"机房：{sheet_name}")
         group_cell.font = Font(name=_FONT_NAME, size=11, bold=True, color="344054")
         group_cell.fill = PatternFill("solid", fgColor="E9EEF5")
         group_cell.alignment = Alignment(horizontal="left", vertical="center")
@@ -490,7 +507,7 @@ def _write_rack_sheet(
                     title_row=title_row,
                     max_height=max_height,
                 )
-                title_cells.append((coordinate, rack.rack_name))
+                title_cells.append((sheet.title, coordinate, rack))
                 _render_rack_devices(
                     sheet,
                     rack,
@@ -500,15 +517,13 @@ def _write_rack_sheet(
                 )
             current_row += max_height + 3
 
-    sheet.freeze_panes = "A4"
-    sheet.print_area = (
-        f"A1:{get_column_letter(diagram_max_column)}{max(current_row - 1, 4)}"
-    )
-    sheet.print_title_rows = "1:2"
-    sheet.page_setup.orientation = "landscape"
-    sheet.page_setup.fitToWidth = 1
-    sheet.page_setup.fitToHeight = 0
-    sheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+        sheet.freeze_panes = "A4"
+        sheet.print_area = f"A1:{get_column_letter(diagram_max_column)}{max(current_row - 1, 4)}"
+        sheet.print_title_rows = "1:2"
+        sheet.page_setup.orientation = "landscape"
+        sheet.page_setup.fitToWidth = 1
+        sheet.page_setup.fitToHeight = 0
+        sheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
     return tuple(title_cells)
 
 
@@ -516,20 +531,11 @@ def _write_position_sheet(
     workbook: Workbook,
     project: RackProject,
     rows: list[_PositionRow],
-) -> None:
-    sheet = workbook.create_sheet(_POSITION_SHEET)
+) -> str:
+    sheet = workbook.create_sheet(_unique_sheet_name(workbook, _POSITION_SHEET))
     sheet.sheet_view.showGridLines = False
     sheet.sheet_properties.tabColor = "70AD47"
-    _literal_text(sheet["A1"], _POSITION_SHEET)
-    sheet["A1"].font = Font(name=_FONT_NAME, size=16, bold=True, color="172033")
-    warning_count = len(project.conflicts)
-    note = "按源工作表、机柜和 U 位排序；可直接使用标题行筛选。"
-    if warning_count:
-        note += f" 当前项目另有 {warning_count} 条异常提示，请在 RackTool 中核对。"
-    _literal_text(sheet["A2"], note)
-    sheet["A2"].font = Font(name=_FONT_NAME, size=10, italic=True, color="667085")
-
-    header_row = 4
+    header_row = 1
     for column, header in enumerate(_POSITION_HEADERS, start=1):
         cell = _cell(sheet, header_row, column)
         _literal_text(cell, header)
@@ -545,11 +551,9 @@ def _write_position_sheet(
             output_index,
             row.display_text,
             row.rack_name,
-            row.start_u,
-            row.end_u,
+            _u_label(row),
             row.height_u,
             row.sheet_name,
-            row.source_range,
             row.status,
             row.device_id,
             row.rack_id,
@@ -562,7 +566,7 @@ def _write_position_sheet(
                 cell.value = value
             cell.font = Font(name=_FONT_NAME, size=10, color="172033")
             cell.alignment = Alignment(
-                horizontal="left" if column in {2, 3, 7, 8, 9} else "center",
+                horizontal="left" if column in {2, 3, 6, 7} else "center",
                 vertical="top" if column == 2 else "center",
                 wrap_text=True,
             )
@@ -572,7 +576,14 @@ def _write_position_sheet(
 
     last_row = header_row + max(len(rows), 1)
     if rows:
-        table = Table(displayName="DevicePositionsTable", ref=f"A4:K{last_row}")
+        table_name = "RackToolDevicePositions"
+        index = 1
+        existing_names = {name.casefold() for name in workbook.defined_names}
+        existing_names.update(name.casefold() for worksheet in workbook.worksheets for name in worksheet.tables)
+        while table_name.casefold() in existing_names:
+            index += 1
+            table_name = f"RackToolDevicePositions{index}"
+        table = Table(displayName=table_name, ref=f"A1:I{last_row}")
         table.tableStyleInfo = TableStyleInfo(
             name="TableStyleMedium2",
             showFirstColumn=False,
@@ -582,64 +593,159 @@ def _write_position_sheet(
         )
         sheet.add_table(table)
     else:
-        sheet.auto_filter.ref = "A4:K4"
-        _literal_text(sheet["A5"], "当前项目没有设备记录。")
-        sheet.merge_cells("A5:I5")
-        sheet["A5"].font = Font(name=_FONT_NAME, size=10, italic=True, color="667085")
+        sheet.auto_filter.ref = "A1:I1"
 
-    widths = (7, 38, 18, 10, 10, 11, 18, 16, 18, 25, 25)
+    widths = (7, 44, 18, 14, 11, 22, 18, 25, 25)
     for column, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(column)].width = width
-    sheet.column_dimensions["J"].hidden = True
-    sheet.column_dimensions["K"].hidden = True
-    sheet.freeze_panes = "A5"
-    sheet.print_title_rows = "4:4"
-    sheet.print_area = f"A1:I{last_row}"
+    sheet.column_dimensions["H"].hidden = True
+    sheet.column_dimensions["I"].hidden = True
+    sheet.freeze_panes = "A2"
+    sheet.print_title_rows = "1:1"
+    sheet.print_area = f"A1:G{last_row}"
     sheet.page_setup.orientation = "landscape"
     sheet.page_setup.fitToWidth = 1
     sheet.page_setup.fitToHeight = 0
     sheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    return cast(str, sheet.title)
 
 
-def _build_workbook(project: RackProject) -> tuple[Workbook, _ExportManifest]:
-    workbook = Workbook()
+def _source_metadata(workbook: Workbook) -> tuple[str, ...]:
+    details = [str(workbook.defined_names)]
+    for sheet in workbook.worksheets:
+        details.append(repr((sheet.title, sheet.freeze_panes, str(sheet.print_area),
+                             sheet.print_title_rows, sheet.print_title_cols)))
+        for item in (sheet.sheet_format, sheet.sheet_properties, sheet.page_setup,
+                     sheet.page_margins, sheet.data_validations):
+            details.append(ElementTree.tostring(item.to_tree(), encoding="unicode"))
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.comment is not None:
+                    details.append(repr((sheet.title, cell.coordinate, cell.comment.text, cell.comment.author)))
+                if cell.hyperlink is not None:
+                    link = cell.hyperlink
+                    details.append(repr((sheet.title, cell.coordinate, link.target, link.location, link.tooltip)))
+    return tuple(details)
+
+
+def _source_workbook(project: RackProject) -> tuple[Workbook, tuple[SheetInfo, ...], tuple[str, ...], bytes]:
+    if project.source_workbook is None or project.workbook_fingerprint is None:
+        raise ValueError("保留原版面导出需要已绑定 Excel 的项目；新建项目请使用标准导出。")
+    source = normalize_path(Path(project.source_workbook))
+    payload = source.read_bytes()
+    if hashlib.sha256(payload).hexdigest() != project.workbook_fingerprint:
+        raise ValueError("源文件已变化，请重新扫描后再导出原版面。")
+    with tempfile.TemporaryDirectory(prefix="racktool-source-export-") as directory:
+        snapshot = Path(directory) / "source.xlsx"
+        snapshot.write_bytes(payload)
+        with ZipFile(snapshot) as archive:
+            for member in archive.namelist():
+                name = member.replace("\\", "/").lower()
+                if any(part in name for part in (
+                    "vbaproject", "xl/activex/", "xl/ctrlprops/",
+                )):
+                    raise ValueError("原版面含未支持的 Excel 对象，不能保证保留；请使用标准导出。")
+        rescanned = rescan_workbook(snapshot, project)
+        old_rows = sorted((replace(row, source_index=0, rack_index=0) for row in _position_rows(project)),
+                          key=lambda row: row.device_id)
+        new_rows = sorted((replace(row, source_index=0, rack_index=0) for row in _position_rows(rescanned.project)),
+                          key=lambda row: row.device_id)
+        if (not rescanned.accepted or new_rows != old_rows
+                or sorted(rescanned.project.racks, key=lambda rack: rack.rack_id)
+                != sorted(project.racks, key=lambda rack: rack.rack_id)):
+            raise ValueError("项目与源文件不一致，请先同步或重新扫描，再导出原版面。")
+        sheets = tuple(scan_workbook(snapshot).sheets)
+        workbook = load_xlsx_workbook(snapshot)
+    return workbook, sheets, _source_metadata(workbook), payload
+
+
+def _build_workbook(
+    project: RackProject, layout: Literal["standard", "source"] = "standard",
+) -> tuple[Workbook, _ExportManifest]:
+    source_sheets: tuple[SheetInfo, ...] = ()
+    metadata: tuple[str, ...] = ()
+    payload = b""
+    if layout == "source":
+        workbook, source_sheets, metadata, payload = _source_workbook(project)
+    else:
+        workbook = Workbook()
+        if workbook.active is not None:
+            workbook.remove(workbook.active)
     try:
-        workbook.properties.creator = "RackTool"
-        workbook.properties.title = "RackTool 机柜图与设备位置表"
-        workbook.properties.subject = "RackTool 标准导出"
+        if layout == "standard":
+            workbook.properties.creator = "RackTool"
+            workbook.properties.title = "RackTool 机柜图与设备位置表"
+            workbook.properties.subject = "RackTool 标准导出"
         rows = _position_rows(project)
-        rack_titles = _write_rack_sheet(workbook, project)
-        _write_position_sheet(workbook, project, rows)
-        workbook.active = 0
-        return workbook, _ExportManifest(rack_titles, tuple(rows))
+        rack_titles = _write_rack_sheet(workbook, project) if layout == "standard" else ()
+        position_sheet = _write_position_sheet(workbook, project, rows)
+        return workbook, _ExportManifest(rack_titles, tuple(rows), tuple(workbook.sheetnames),
+                                         position_sheet, source_sheets, metadata, payload)
     except Exception:
         workbook.close()
         raise
 
 
 def _validate_export(path: Path, manifest: _ExportManifest) -> None:
-    workbook = load_workbook(path, read_only=False, data_only=False)
+    workbook = load_xlsx_workbook(path, read_only=False, data_only=False)
     try:
-        if workbook.sheetnames != [_RACK_SHEET, _POSITION_SHEET]:
+        if tuple(workbook.sheetnames) != manifest.sheet_names:
             raise ValueError("导出验证失败：工作表结构不完整。")
-        rack_sheet = workbook[_RACK_SHEET]
-        position_sheet = workbook[_POSITION_SHEET]
-        headers = tuple(position_sheet.cell(4, column).value for column in range(1, 12))
+        position_sheet = workbook[manifest.position_sheet]
+        headers = tuple(position_sheet.cell(1, column).value for column in range(1, 10))
         if headers != _POSITION_HEADERS:
             raise ValueError("导出验证失败：设备位置表标题不完整。")
-        exported_text = tuple(
-            position_sheet.cell(row, 2).value
-            for row in range(5, 5 + len(manifest.position_rows))
-        )
-        expected_text = tuple(row.display_text for row in manifest.position_rows)
-        if exported_text != expected_text:
-            raise ValueError("导出验证失败：设备文字在保存后发生变化。")
-        for coordinate, rack_name in manifest.rack_titles:
-            if rack_sheet[coordinate].value != rack_name:
+        for index, row in enumerate(manifest.position_rows, 2):
+            expected = (index - 1, row.display_text, row.rack_name or None, _u_label(row) or None, row.height_u,
+                        row.sheet_name or None, row.status, row.device_id, row.rack_id or None)
+            actual = tuple(position_sheet.cell(index, column).value for column in range(1, 10))
+            if actual != expected:
+                raise ValueError("导出验证失败：设备位置表内容在保存后发生变化。")
+        for sheet_name, coordinate, rack in manifest.rack_titles:
+            diagram_sheet = workbook[sheet_name]
+            title = diagram_sheet[coordinate]
+            if title.value != rack.rack_name:
                 raise ValueError("导出验证失败：机柜名称在保存后发生变化。")
+            for unit in range(1, rack.height_u + 1):
+                row_number = _unit_row(rack, title.row + 1, unit)
+                if any(diagram_sheet.cell(row_number, column).value != unit
+                       for column in (title.column, title.column + _RACK_BLOCK_COLUMNS - 1)):
+                    raise ValueError("导出验证失败：机柜 U 轴方向或标尺发生变化。")
+            for row in manifest.position_rows:
+                if row.rack_id != rack.rack_id or row.status != "在位":
+                    continue
+                assert row.start_u is not None and row.end_u is not None
+                top, bottom = sorted((_unit_row(rack, title.row + 1, row.start_u),
+                                      _unit_row(rack, title.row + 1, row.end_u)))
+                anchor = diagram_sheet.cell(top, title.column + 1)
+                if anchor.value != row.display_text:
+                    raise ValueError("导出验证失败：机柜内设备文字或 U 位发生变化。")
+                if bottom > top and not any(
+                    merge.min_row == top and merge.max_row == bottom
+                    and merge.min_col == merge.max_col == title.column + 1
+                    for merge in diagram_sheet.merged_cells.ranges
+                ):
+                    raise ValueError("导出验证失败：设备 U 位合并范围发生变化。")
         for sheet in workbook.worksheets:
+            if manifest.source_sheets and sheet.title != manifest.position_sheet:
+                continue  # Original formulas are source content, not generated device text.
             if any(cell.data_type == "f" for row in sheet.iter_rows() for cell in row):
                 raise ValueError("导出验证失败：导出表中出现了意外公式。")
+        if manifest.source_sheets:
+            changed_parts = {"xl/workbook.xml", "xl/_rels/workbook.xml.rels", "xl/styles.xml", "[Content_Types].xml"}
+            from io import BytesIO
+
+            with ZipFile(BytesIO(manifest.source_payload)) as original, ZipFile(path) as exported:
+                for name in original.namelist():
+                    canonical = name.replace("\\", "/")
+                    if canonical not in changed_parts and original.read(name) != exported.read(canonical):
+                        raise ValueError("导出验证失败：原工作簿部件发生变化。")
+            actual_sheets = tuple(scan_workbook(path).sheets[:len(manifest.source_sheets)])
+            if actual_sheets != manifest.source_sheets:
+                raise ValueError("导出验证失败：原工作表的内容、样式、方向或尺寸发生变化。")
+            workbook.remove(position_sheet)
+            if _source_metadata(workbook) != manifest.source_metadata:
+                raise ValueError("导出验证失败：原工作表的备注、链接或打印设置发生变化。")
     finally:
         workbook.close()
 
@@ -649,11 +755,14 @@ def export_project_workbook(
     path: Path,
     *,
     overwrite: bool = False,
+    layout: Literal["standard", "source"] = "standard",
 ) -> Path:
-    """Create a validated two-sheet XLSX export without touching the source workbook."""
+    """Export room sheets and compact positions, optionally preserving source layout."""
+    if layout not in {"standard", "source"}:
+        raise ValueError("导出版面必须是 standard 或 source。")
     errors = project_error_conflicts(project)
     if errors:
-        raise ValueError("项目数据仍有未解决错误，请先在“异常”页处理后再导出。")
+        raise ValueError("项目数据仍有未解决错误，请先核对分析结果并解决异常后再导出。")
     destination = _normalise_destination(path, project)
     if destination.exists():
         if destination.is_dir():
@@ -661,7 +770,7 @@ def export_project_workbook(
         if not overwrite:
             raise FileExistsError("导出文件已存在；请换一个文件名，或明确允许覆盖。")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    workbook, manifest = _build_workbook(project)
+    workbook, manifest = _build_workbook(project, layout)
     with tempfile.NamedTemporaryFile(
         mode="wb",
         prefix=f".{destination.stem}.tmp-",
@@ -673,7 +782,11 @@ def export_project_workbook(
     try:
         workbook.save(temp_path)
         workbook.close()
+        if manifest.source_payload:
+            append_position_sheet(manifest.source_payload, temp_path, manifest.position_sheet)
         _validate_export(temp_path, manifest)
+        if layout == "source" and sha256_file(Path(project.source_workbook or "")) != project.workbook_fingerprint:
+            raise ValueError("源文件在导出期间变化，请重新扫描后再试。")
         os.replace(temp_path, destination)
     except Exception:
         workbook.close()

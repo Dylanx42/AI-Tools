@@ -3,7 +3,40 @@
 RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最终将以统一的 RackCore
 连接 CLI、桌面界面和可选的 Agent 工作流，同时把结构化机柜数据作为事实层。
 
-## 当前状态
+## 当前使用方式：Skill + AI 对话
+
+2026-10-14 用户本地验收发现 GUI 排序/缩放控件文字为空，已改以 **RackTool Skill** 为主入口。
+GUI 为历史可选客户端，不要求继续使用；旧 headless PASS 不能代表 GUI 人工可用。
+AI 负责理解、唯一定位和调用 CLI，RackCore 继续负责确定性解析、冲突检查、备份和写入。
+
+在支持 Skills 的本地 Codex 中，从本项目目录安装：
+
+```bash
+python scripts/install_skill.py
+```
+
+安装到 `~/.agents/skills/racktool`，已存在时保留并拒绝覆盖；加载/刷新后可说
+“$racktool 看一下这份机柜图”或“把这个机房 A01 的设备移到 A03 的 21–22U，导出给我”。
+技能规范和边界见 [RackTool Skill](skills/racktool/SKILL.md)。Core 只需 Python 3.11+，
+安装 `python -m pip install -e .`，不需要 Qt。安装/同步必须在实际持有本地文件的执行环境完成。
+
+导出提供两种版面：
+
+```bash
+# 保留原机房 Sheet、原 U 轴与布局，追加新设备位置表；Skill 对绑定项目默认用它
+python -m racktool export project.sqlite result.xlsx --layout source
+# 每个机房独立 Sheet，保留每柜 U 方向，统一单列设备区和样式
+python -m racktool export project.sqlite standard.xlsx --layout standard
+```
+
+设备位置表第 1 行就是筛选标题，无前三行注释，无来源单元格；U 位单列显示 `21-22U` /
+`21U`，“机房”来自原 Sheet 名。原有同名业务页保留，新表自动使用唯一名称。
+原版面导出需要当前源文件与项目 Hash/状态一致，先重扫验证再创建独立文件，不改原图。
+当前改变与验证见 [ADR-014](docs/decisions/ADR-014-skill-room-export.md)。
+实际问题、原版面核对与回归见 [本轮验证记录](docs/gates/room-export-skill.md) 和
+[2026-10-14 更新](docs/updates/2026-10-14-skill-room-export.md)。
+
+## 历史 GUI 与自动化状态
 
 **V0.1～V0.5 automated gates PASS**。V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责
 稳定身份，V0.4 负责安全写回，V0.5 提供不嵌入 Agent 的本地驾驶舱。旧的表格式 GUI 在 macOS
@@ -134,7 +167,7 @@ python -m racktool analyze path/to/rack-layout.xlsx
 原 ID、U 范围、合并与样式；注释、超链接、数据验证、命名区域或未知内容相交时拒绝写入。
 新增/改名文字按字面量保存，`=` 开头也不会变成公式；移动保留原单元格的文字/公式类型。
 非法 XML 控制字符与无效 Unicode 在写入前被拒绝，新建项目也使用同一校验。
-`export` 只读取已保存的项目状态，新建一个含“机柜图”和“设备位置表”的标准 `.xlsx`；机柜图
+`export` 只读取已保存的项目状态，默认新建每机房一个机柜 Sheet 及“设备位置表”的标准 `.xlsx`；机柜图
 按照源工作表顺序和每一排的原始列顺序横向排列，不再按固定数量换行，并为合并的机柜标题和设备
 区域绘制完整外框。它通过临时文件、重载验证和原子替换生成导出文件，不写源工作簿。命令行默认不覆盖已有导出，确需覆盖时
 显式增加 `--force`；GUI 的“导出表格”由系统保存对话框确认文件名，原有 JSON 导出保留在文件菜单。
