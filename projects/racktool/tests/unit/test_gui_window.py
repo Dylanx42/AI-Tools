@@ -191,7 +191,7 @@ def test_export_button_creates_two_sheet_excel_workbook(
         assert output.is_file()
         workbook = load_workbook(output, read_only=True, data_only=False)
         try:
-            assert workbook.sheetnames == ["机柜图", "设备位置表"]
+            assert workbook.sheetnames == [session.project.racks[0].source_sheet, "设备位置表"]
         finally:
             workbook.close()
         assert session.status_message == "已导出 gui-export.xlsx"

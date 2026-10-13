@@ -83,8 +83,8 @@ def test_export_contains_rack_diagram_and_filterable_device_positions(
     assert source.read_bytes() == source_bytes
     workbook = load_workbook(output, read_only=False, data_only=False)
     try:
-        assert workbook.sheetnames == ["机柜图", "设备位置表"]
-        diagram = workbook["机柜图"]
+        assert workbook.sheetnames == ["一期机柜", "设备位置表"]
+        diagram = workbook["一期机柜"]
         positions = workbook["设备位置表"]
         diagram_values = {
             cell.value
@@ -101,31 +101,29 @@ def test_export_contains_rack_diagram_and_filterable_device_positions(
             for cell in row
         )
 
-        headers = [positions.cell(4, column).value for column in range(1, 12)]
+        headers = [positions.cell(1, column).value for column in range(1, 10)]
         assert headers == [
             "序号",
             "设备",
             "机柜",
-            "起始 U",
-            "结束 U",
+            "U 位",
             "高度（U）",
-            "工作表",
-            "来源单元格",
+            "机房",
             "状态",
             "设备 ID",
             "机柜 ID",
         ]
-        assert positions.freeze_panes == "A5"
-        assert positions.column_dimensions["J"].hidden
-        assert positions.column_dimensions["K"].hidden
-        assert "DevicePositionsTable" in positions.tables
-        rows = list(positions.iter_rows(min_row=5, max_col=11, values_only=True))
+        assert positions.freeze_panes == "A2"
+        assert positions.column_dimensions["H"].hidden
+        assert positions.column_dimensions["I"].hidden
+        assert "RackToolDevicePositions" in positions.tables
+        rows = list(positions.iter_rows(min_row=2, max_col=9, values_only=True))
         assert [row[1] for row in rows] == [
             "核心交换机\nS5735-L48T4XE\n带外管理",
             "防火墙",
             "应用服务器",
         ]
-        assert rows[0][2:9] == ("RACK-A", 11, 12, 2, "一期机柜", "B2:B3", "在位")
+        assert rows[0][2:7] == ("RACK-A", "11-12U", 2, "一期机柜", "在位")
         assert all(
             cell.data_type != "f"
             for sheet in workbook.worksheets
@@ -148,7 +146,7 @@ def test_export_preserves_source_rack_rows_instead_of_wrapping_every_four(
 
     workbook = load_workbook(output, read_only=False, data_only=False)
     try:
-        diagram = workbook["机柜图"]
+        diagram = workbook["机柜布局"]
         rack_names = {
             *(f"A{index:02d}" for index in range(1, 7)),
             *(f"B{index:02d}" for index in range(1, 4)),
@@ -201,14 +199,7 @@ def test_export_preserves_source_workbook_sheet_order(tmp_path: Path) -> None:
 
     exported = load_workbook(output, read_only=False, data_only=False)
     try:
-        diagram = exported["机柜图"]
-        group_rows = {
-            str(cell.value): cell.row
-            for row in diagram.iter_rows()
-            for cell in row
-            if str(cell.value).startswith("来源工作表：")
-        }
-        assert group_rows["来源工作表：Z-先显示"] < group_rows["来源工作表：A-后显示"]
+        assert exported.sheetnames == ["Z-先显示", "A-后显示", "设备位置表"]
     finally:
         exported.close()
 
@@ -222,7 +213,7 @@ def test_export_uses_one_device_column_and_round_trips_u_positions(tmp_path: Pat
     session.export_xlsx(output)
 
     analysis = analyze_workbook(output)
-    diagram_analysis = next(sheet for sheet in analysis.sheets if sheet.name == "机柜图")
+    diagram_analysis = next(sheet for sheet in analysis.sheets if sheet.name == "一期机柜")
     assert len(diagram_analysis.racks) == 2
     assert all(len(rack.device_columns) == 1 for rack in diagram_analysis.racks)
     racks = {rack.candidate_id: rack.rack_name for rack in diagram_analysis.racks}
@@ -237,7 +228,7 @@ def test_export_uses_one_device_column_and_round_trips_u_positions(tmp_path: Pat
     }
     workbook = load_workbook(output)
     try:
-        diagram = workbook["机柜图"]
+        diagram = workbook["一期机柜"]
         assert diagram.column_dimensions["B"].width == 30
         assert diagram["B9"].value is None  # An editable, empty 10 U slot.
         assert diagram["B9"].border.left.style == "thin"
@@ -265,7 +256,7 @@ def test_export_draws_complete_borders_around_merged_titles_and_devices(
 
     workbook = load_workbook(output, read_only=False, data_only=False)
     try:
-        diagram = workbook["机柜图"]
+        diagram = workbook["一期机柜"]
 
         def merged_range_for(value: str):
             return next(
@@ -370,10 +361,10 @@ def test_export_excludes_unsynced_moves_and_says_so(tmp_path: Path) -> None:
         positions = workbook["设备位置表"]
         row = next(
             values
-            for values in positions.iter_rows(min_row=5, max_col=9, values_only=True)
+            for values in positions.iter_rows(min_row=2, max_col=9, values_only=True)
             if values[1] == "防火墙"
         )
-        assert row[2:5] == ("RACK-A", 8, 8)
+        assert row[2:5] == ("RACK-A", "8U", 1)
     finally:
         workbook.close()
     assert "不含 1 项待同步更改" in session.status_message

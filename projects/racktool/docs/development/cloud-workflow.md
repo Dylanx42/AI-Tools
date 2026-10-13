@@ -1,5 +1,9 @@
 # RackTool 云端开发与本地交接
 
+2026-10-14 用户调整：主使用入口改为 Skill/AI 对话；GUI 排序与缩放文字为空已报告为
+本地验收失败，不再要求用户做 GUI 操作。当前使用说明优先项目 README、
+`skills/racktool/SKILL.md` 和 ADR-014；下列 GUI 启动/验收步骤仅为历史参考。
+
 日常代码、CLI、自动化测试和 Qt widget 开发在云端进行，代码通过 GitHub 分支/PR 保存。
 RackTool 本身继续离线可用；云端开发不增加产品云服务或 Agent 运行时依赖。
 Microsoft Excel/WPS 和 macOS/Windows 最终桌面验收仍在对应设备执行。

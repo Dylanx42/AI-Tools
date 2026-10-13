@@ -15,5 +15,6 @@
 11. `ADR-011-analysis-package.md` — 从只读快照生成可追溯的陌生布局分析包
 12. `ADR-012-draft-project-editing.md` — 未绑定 Excel 的新建项目编辑与稳定身份
 13. `ADR-013-safe-device-add-rename.md` — 已绑定 Excel 的设备新增/文字编辑使用 Safe Sync 事务
+14. `ADR-014-skill-room-export.md` — Skill 主入口、机房分 Sheet、U 方向与原版面导出
 
 架构方向发生变化时，应新增 ADR 或明确 supersede 旧 ADR。

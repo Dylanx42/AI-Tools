@@ -152,6 +152,10 @@ def build_parser() -> argparse.ArgumentParser:
     export_parser.add_argument("database", type=Path)
     export_parser.add_argument("output", type=Path)
     export_parser.add_argument(
+        "--layout", choices=("standard", "source"), default="standard",
+        help="standard: one diagram per room; source: preserve original sheets and layout",
+    )
+    export_parser.add_argument(
         "--force",
         action="store_true",
         help="replace an existing export after explicit confirmation",
@@ -194,7 +198,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _sync_command(args)
         if args.command == "export":
             project = load_project_state(args.database)
-            output = export_project_workbook(project, args.output, overwrite=args.force)
+            output = export_project_workbook(project, args.output, overwrite=args.force, layout=args.layout)
             print(
                 json.dumps(
                     {"status": "exported", "output": str(output)},

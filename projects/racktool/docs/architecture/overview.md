@@ -2,6 +2,9 @@
 
 ## 1. 架构目标
 
+2026-10-14 主使用入口改为 RackTool Skill → CLI → RackCore。GUI 为历史可选客户端，
+不再要求用户在 GUI 中操作；当前决策见 ADR-014，单一 Core 与离线 CLI 的边界保持。
+
 RackTool 的架构必须同时满足：
 
 - 本地可独立运行；
@@ -154,6 +157,10 @@ Atomic replace of export target
 
 标准导出生成独立工作簿，不修改绑定的源 XLSX。GUI 和 CLI 只选择目标并调用 RackCore；机柜顺序、
 U 位、换行文字、筛选表和保存后验证均由同一核心实现负责。
+
+标准模式现在为每个机房生成独立同名 Sheet，并保留每柜的 U 方向。
+原版面模式 `--layout source` 在源 Hash/项目状态核对后，将原业务 OOXML 部件保留，追加
+新设备位置表和必要样式；重载核对原部件、结构及元数据，原子发布新的输出文件。
 
 ## 5. 为什么 RackCore 不依赖 Agent
 

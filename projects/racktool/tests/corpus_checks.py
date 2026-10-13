@@ -56,19 +56,23 @@ def _check_project(project: RackProject, facts: dict[str, Any]) -> None:
 
 def _check_export(path: Path, facts: dict[str, Any]) -> None:
     analysis = analyze_workbook(path)
-    sheet = next(sheet for sheet in analysis.sheets if sheet.name == "机柜图")
-    assert len(sheet.racks) == len(facts["racks"])
-    assert {(rack.rack_name, rack.height_u) for rack in sheet.racks} == {
+    sheets = [sheet for sheet in analysis.sheets if sheet.racks]
+    racks = [rack for sheet in sheets for rack in sheet.racks]
+    assert len(racks) == len(facts["racks"])
+    assert {(rack.rack_name, rack.height_u) for rack in racks} == {
         (rack["name"], rack["height"]) for rack in facts["racks"]
     }
-    names = {rack.candidate_id: rack.rack_name for rack in sheet.racks}
-    texts = {device.candidate_id: device.display_text for device in sheet.devices}
-    assert len(sheet.devices) == len(sheet.placements) == len(facts["devices"])
+    direction = facts.get("case", {}).get("direction", "descending")
+    assert all(rack.direction == direction for rack in racks)
+    names = {rack.candidate_id: rack.rack_name for rack in racks}
+    texts = {device.candidate_id: device.display_text for sheet in sheets for device in sheet.devices}
+    placements = [p for sheet in sheets for p in sheet.placements]
+    assert len(texts) == len(placements) == len(facts["devices"])
     assert Counter((texts[p.device_candidate_id], names[p.rack_candidate_id], p.start_u, p.end_u)
-                   for p in sheet.placements) == Counter(
+                   for p in placements) == Counter(
         (device["text"], device["rack"], device["low"], device["high"]) for device in facts["devices"]
     )
-    assert all(len(rack.device_columns) == 1 for rack in sheet.racks)
+    assert all(len(rack.device_columns) == 1 for rack in racks)
     workbook = load_workbook(path)
     try:
         assert all(cell.data_type != "f" for sheet in workbook.worksheets for row in sheet.iter_rows() for cell in row)
