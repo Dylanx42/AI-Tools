@@ -12,5 +12,6 @@
 8. `ADR-008-safe-write-transaction.md` — XLSX 安全事务式写回
 9. `ADR-009-sqlite-project-state.md` — SQLite 保存本地项目身份与 Mapping
 10. `ADR-010-managed-local-storage.md` — GUI 项目状态与备份使用受管本地存储和有界保留
+11. `ADR-011-analysis-package.md` — 从只读快照生成可追溯的陌生布局分析包
 
 架构方向发生变化时，应新增 ADR 或明确 supersede 旧 ADR。

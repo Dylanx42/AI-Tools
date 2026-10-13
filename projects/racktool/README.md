@@ -44,6 +44,7 @@ Ruff、strict mypy 和新版 Qt offscreen 冒烟检查通过。历史 macOS nati
 本轮功能与验证摘要见 [2026-09-16 进度更新](docs/updates/2026-09-16.md)。
 云端整合与跨平台检查记录见 [2026-10-08 开发交接](docs/updates/2026-10-08.md)。
 单格导出与空模板统一记录见 [2026-10-09 导出优化](docs/updates/2026-10-09.md)。
+陌生布局交接能力见 [2026-10-13 分析包](docs/updates/2026-10-13-analysis-package.md)。
 
 ## Windows 便携版（同事测试）
 
@@ -102,6 +103,7 @@ Excel 旁边生成 `.sqlite`、`.sqlite.bak-*` 等实现文件。真实写回前
 ```bash
 racktool inspect path/to/workbook.xlsx
 racktool analyze path/to/rack-layout.xlsx
+racktool analysis-package path/to/rack-layout.xlsx path/to/layout-analysis.zip
 racktool profile validate path/to/profile.yaml
 racktool profile match path/to/rack-layout.xlsx path/to/profile.yaml
 racktool profile apply path/to/rack-layout.xlsx path/to/profile.yaml
@@ -138,6 +140,27 @@ python scripts/generate_empty_racks.py --count 18 --height 42 --output /path/to/
 `--count` 控制每排数量（1–99），`--height` 控制高度（1–100U）；已有输出文件默认拒绝覆盖，
 确需替换时增加 `--overwrite`。脚本仅创建空项目并调用正式导出，不读取已有业务工作簿；设备格、
 标尺、边框和保存验证均由 RackCore 统一处理。
+
+## 陌生 Excel 的布局适配
+
+Core/CLI 已支持导出布局分析包：
+
+```bash
+racktool analysis-package your-workbook.xlsx layout-analysis.zip
+# 需要把完整原文件一并交接时，显式附带；已有输出默认不覆盖
+racktool analysis-package your-workbook.xlsx layout-analysis.zip --include-source --force
+racktool profile validate layout.yaml
+racktool profile apply your-workbook.xlsx layout.yaml
+# 先核对 dry-run 的工作表、匹配状态及异常，再导入
+racktool project import your-workbook.xlsx project.sqlite --profile layout.yaml
+```
+
+ZIP 包含结构、合并区域、U 轴/机柜/设备/位置候选、置信度、异常汇总及源文件 SHA256。
+所有内容来自同一份只读快照，原 Excel 和项目数据库不会被改动；不包含尚未同步的修改。
+默认不附带原 XLSX，但 JSON **仍包含单元格文字及隐藏工作表，未自动脱敏**，分享前应核对。
+人工或 Agent 根据这些材料编写纯布局 Profile，已有命令负责校验和 dry-run；出现歧义时修正
+规则，不强行导入。详情见 [ADR-011](docs/decisions/ADR-011-analysis-package.md)。
+本轮是 V0.6 的 Core/CLI 交接能力，GUI 的分析包入口、Profile 预览和确认仍待接入。
 
 ## 明确不支持
 

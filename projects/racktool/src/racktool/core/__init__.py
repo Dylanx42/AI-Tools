@@ -1,3 +1,4 @@
+from racktool.core.analysis_package import export_analysis_package
 from racktool.core.analyzer import analyze_workbook
 from racktool.core.export import export_project_workbook
 from racktool.core.project import import_workbook, rescan_workbook
@@ -23,6 +24,7 @@ __all__ = [
     "apply_writeback",
     "commit_write_plan",
     "create_empty_rack_project",
+    "export_analysis_package",
     "export_project_workbook",
     "import_project",
     "import_workbook",

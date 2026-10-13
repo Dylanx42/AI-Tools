@@ -192,6 +192,10 @@
 
 ### V0.6 — Unknown Layout Workflow
 
+2026-10-13：Core/CLI 分析包已实现，结构、候选和异常均来自同一份只读快照；既有 YAML
+Profile 校验、dry-run 和导入可用于适配流程。GUI 分析包入口与 Profile 预览/确认仍待完成，
+V0.6 尚不记为整阶段通过。用户当前优先 Core/CLI，GUI 后续安排。
+
 目标：本地 APP 与 Agent/人工通过文件协作。
 
 功能：
