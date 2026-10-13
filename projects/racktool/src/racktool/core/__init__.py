@@ -1,5 +1,11 @@
 from racktool.core.analysis_package import export_analysis_package
 from racktool.core.analyzer import analyze_workbook
+from racktool.core.editing import (
+    add_draft_device,
+    add_draft_rack,
+    create_draft_project,
+    edit_draft_device,
+)
 from racktool.core.export import export_project_workbook
 from racktool.core.project import import_workbook, rescan_workbook
 from racktool.core.service import (
@@ -20,10 +26,14 @@ from racktool.core.workbook import scan_workbook
 
 __all__ = [
     "MoveRequest",
+    "add_draft_device",
+    "add_draft_rack",
     "analyze_workbook",
     "apply_writeback",
     "commit_write_plan",
+    "create_draft_project",
     "create_empty_rack_project",
+    "edit_draft_device",
     "export_analysis_package",
     "export_project_workbook",
     "import_project",
