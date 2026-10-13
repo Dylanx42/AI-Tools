@@ -6,7 +6,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from racktool.core import analyze_workbook, export_project_workbook, scan_workbook
+from racktool.core import (
+    analyze_workbook,
+    export_analysis_package,
+    export_project_workbook,
+    scan_workbook,
+)
 from racktool.core.service import (
     commit_write_plan,
     import_project,
@@ -28,6 +33,15 @@ def build_parser() -> argparse.ArgumentParser:
         "analyze", help="emit explainable U-axis, rack, and device candidates"
     )
     analyze_parser.add_argument("workbook", type=Path)
+    package_parser = subparsers.add_parser(
+        "analysis-package", help="export a read-only ZIP for unfamiliar layout adaptation"
+    )
+    package_parser.add_argument("workbook", type=Path)
+    package_parser.add_argument("output", type=Path)
+    package_parser.add_argument(
+        "--include-source", action="store_true", help="include a complete copy of the source workbook"
+    )
+    package_parser.add_argument("--force", action="store_true", help="replace an existing package")
     profile_parser = subparsers.add_parser(
         "profile", help="validate, match, fingerprint, or apply a YAML layout Profile"
     )
@@ -123,6 +137,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "profile":
             return _profile_command(args)
+        if args.command == "analysis-package":
+            output = export_analysis_package(
+                args.workbook, args.output, include_source=args.include_source, overwrite=args.force,
+            )
+            print(json.dumps({
+                "status": "exported", "output": str(output),
+                "source_included": args.include_source, "redacted": False,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         if args.command == "project":
             return _project_command(args)
         if args.command == "sync":
