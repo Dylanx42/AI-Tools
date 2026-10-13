@@ -10,6 +10,24 @@ from racktool.models.domain import CellRange, Rack
 from racktool.models.project import RackProject, SourceMapping
 
 
+def _virtual_rack(
+    name: str, rack_id: str, sheet_name: str, column: int, title_row: int, height_u: int,
+) -> Rack:
+    left, right = get_column_letter(column), get_column_letter(column + 2)
+    return Rack(
+        rack_id=rack_id, rack_name=name, height_u=height_u, source_sheet=sheet_name,
+        bounds=CellRange(
+            min_row=title_row, max_row=title_row + height_u, min_col=column, max_col=column + 2,
+            a1=f"{left}{title_row}:{right}{title_row + height_u}",
+        ),
+        start_row=title_row + 1, end_row=title_row + height_u,
+        left_axis_column=column, right_axis_column=column + 2, device_columns=[column + 1],
+        direction="descending",
+        u_to_row={u: title_row + height_u + 1 - u for u in range(1, height_u + 1)},
+        title_range=f"{left}{title_row}:{right}{title_row}",
+    )
+
+
 def create_empty_rack_project(count: int = 18, height_u: int = 42) -> RackProject:
     """Create A/B rack rows without reading or modifying an existing workbook."""
     if not 1 <= count <= 99 or not 1 <= height_u <= 100:
@@ -24,35 +42,13 @@ def create_empty_rack_project(count: int = 18, height_u: int = 42) -> RackProjec
         for number in range(1, count + 1):
             column = 1 + (number - 1) * 4
             name = f"{prefix}{number:02d}"
-            left, right = get_column_letter(column), get_column_letter(column + 2)
-            title_range = f"{left}{title_row}:{right}{title_row}"
-            rack = Rack(
-                rack_id=f"empty-{name}",
-                rack_name=name,
-                height_u=height_u,
-                source_sheet=sheet_name,
-                bounds=CellRange(
-                    min_row=title_row,
-                    max_row=title_row + height_u,
-                    min_col=column,
-                    max_col=column + 2,
-                    a1=f"{left}{title_row}:{right}{title_row + height_u}",
-                ),
-                start_row=title_row + 1,
-                end_row=title_row + height_u,
-                left_axis_column=column,
-                right_axis_column=column + 2,
-                device_columns=[column + 1],
-                direction="descending",
-                u_to_row={u: title_row + height_u + 1 - u for u in range(1, height_u + 1)},
-                title_range=title_range,
-            )
+            rack = _virtual_rack(name, f"empty-{name}", sheet_name, column, title_row, height_u)
             racks.append(rack)
             mappings.append(SourceMapping(
                 mapping_id=f"title-{name}",
                 workbook_fingerprint=fingerprint,
                 sheet_name=sheet_name,
-                source_range=title_range,
+                source_range=rack.title_range or "",
                 mapping_kind="rack_title",
                 rack_id=rack.rack_id,
             ))

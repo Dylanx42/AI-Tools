@@ -45,6 +45,9 @@ Ruff、strict mypy 和新版 Qt offscreen 冒烟检查通过。历史 macOS nati
 云端整合与跨平台检查记录见 [2026-10-08 开发交接](docs/updates/2026-10-08.md)。
 单格导出与空模板统一记录见 [2026-10-09 导出优化](docs/updates/2026-10-09.md)。
 陌生布局交接能力见 [2026-10-13 分析包](docs/updates/2026-10-13-analysis-package.md)。
+新建项目与设备编辑见 [2026-10-13 编辑流程](docs/updates/2026-10-13-project-editing.md)。
+2026-10-13 两项 Core/CLI 能力整合后，云端完整测试为 184 passed、0 skipped；Ruff、strict
+mypy 与 Qt offscreen 冒烟通过。GUI 接入和实机发布验收继续待完成。
 
 ## Windows 便携版（同事测试）
 
@@ -161,6 +164,25 @@ ZIP 包含结构、合并区域、U 轴/机柜/设备/位置候选、置信度�
 人工或 Agent 根据这些材料编写纯布局 Profile，已有命令负责校验和 dry-run；出现歧义时修正
 规则，不强行导入。详情见 [ADR-011](docs/decisions/ADR-011-analysis-package.md)。
 本轮是 V0.6 的 Core/CLI 交接能力，GUI 的分析包入口、Profile 预览和确认仍待接入。
+
+## 新建项目与设备编辑
+
+可以从零创建持久机柜项目，再添加/编辑设备并生成 Excel：
+
+```bash
+racktool project create new-project.sqlite --count 18 --height 42
+racktool project add-rack new-project.sqlite C01 --row 3 --height 47
+racktool project add-device new-project.sqlite --rack A01 --start-u 41 --end-u 42 --text "核心交换机 2U"
+racktool project show new-project.sqlite
+# DEVICE_ID 使用上一步输出中的 device_id
+racktool project edit-device new-project.sqlite DEVICE_ID --rack B01 --start-u 35 --end-u 36
+racktool export new-project.sqlite new-project.xlsx
+```
+
+设备文字与位置修改保留原 ID，重叠/越界和重复柜名会被拒绝。命令只更新新建项目 SQLite，
+标准导出继续复用 RackCore；请保留 SQLite，重新导入导出文件不等于恢复原项目身份。
+本入口只支持未绑定 Excel 的新建项目，不修改已有业务 XLSX；GUI 新建/编辑后续接入。
+完整参数和多行文字示例见 [新建项目编辑规范](docs/development/draft-projects.md)。
 
 ## 明确不支持
 

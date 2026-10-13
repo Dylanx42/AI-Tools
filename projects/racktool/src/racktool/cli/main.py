@@ -7,7 +7,11 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from racktool.core import (
+    add_draft_device,
+    add_draft_rack,
     analyze_workbook,
+    create_draft_project,
+    edit_draft_device,
     export_analysis_package,
     export_project_workbook,
     scan_workbook,
@@ -75,6 +79,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     project_parser = subparsers.add_parser("project", help="import or rescan stable rack/device identities")
     project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
+    create_parser = project_subparsers.add_parser("create", help="create a new editable A/B rack project")
+    create_parser.add_argument("database", type=Path)
+    create_parser.add_argument("--count", type=int, default=18, help="cabinets per row (default: 18)")
+    create_parser.add_argument("--height", type=int, default=42, help="rack height in U (default: 42)")
+    show_parser = project_subparsers.add_parser("show", help="show saved identities and placements")
+    show_parser.add_argument("database", type=Path)
+    rack_parser = project_subparsers.add_parser("add-rack", help="append a cabinet to a new project")
+    rack_parser.add_argument("database", type=Path)
+    rack_parser.add_argument("name")
+    rack_parser.add_argument("--height", type=int, default=42)
+    rack_parser.add_argument("--row", type=int, default=1, help="one-based rack row, or the next new row")
+    add_parser = project_subparsers.add_parser("add-device", help="add a placed device to a new project")
+    add_parser.add_argument("database", type=Path)
+    add_parser.add_argument("--rack", required=True, help="cabinet ID or unique name")
+    add_parser.add_argument("--start-u", type=int, required=True)
+    add_parser.add_argument("--end-u", type=int, required=True)
+    add_parser.add_argument("--text", required=True, help="device display text; original newlines are kept")
+    edit_parser = project_subparsers.add_parser("edit-device", help="edit a new project's device text or location")
+    edit_parser.add_argument("database", type=Path)
+    edit_parser.add_argument("device_id")
+    edit_parser.add_argument("--text")
+    edit_parser.add_argument("--rack", help="cabinet ID or unique name")
+    edit_parser.add_argument("--start-u", type=int)
+    edit_parser.add_argument("--end-u", type=int)
     import_parser = project_subparsers.add_parser(
         "import",
         help="create a SQLite project from a workbook",
@@ -211,6 +239,22 @@ def _profile_command(args: argparse.Namespace) -> int:
 
 
 def _project_command(args: argparse.Namespace) -> int:
+    if args.project_command in {"create", "show", "add-rack", "add-device", "edit-device"}:
+        if args.project_command == "create":
+            project = create_draft_project(args.database, args.count, args.height)
+        elif args.project_command == "show":
+            project = load_project_state(args.database)
+        elif args.project_command == "add-rack":
+            project = add_draft_rack(args.database, args.name, height_u=args.height, row=args.row)
+        elif args.project_command == "add-device":
+            project = add_draft_device(args.database, args.rack, args.start_u, args.end_u, args.text)
+        else:
+            project = edit_draft_device(
+                args.database, args.device_id, display_text=args.text,
+                rack_reference=args.rack, start_u=args.start_u, end_u=args.end_u,
+            )
+        print(json.dumps(project.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
     if args.project_command == "import":
         profile = load_profile(args.profile) if args.profile is not None else None
         project = import_project(
