@@ -197,8 +197,10 @@ Profile 校验、dry-run 和导入可用于适配流程。GUI 分析包入口与
 V0.6 尚不记为整阶段通过。用户当前优先 Core/CLI，GUI 后续安排。
 
 同日新增新建项目编辑 Core/CLI：从空模板创建持久 SQLite，追加机柜、添加设备、编辑文字与
-位置，再生成标准机柜图和设备位置表。此入口仅支持未绑定源 Excel 的项目；GUI 新建/编辑、
-已导入 Excel 的新增/改名安全写回仍待完成，见 ADR-012 与 `docs/development/draft-projects.md`。
+位置，再生成标准机柜图和设备位置表。此入口仅支持未绑定源 Excel 的项目，GUI 编辑仍待完成；
+新建项目见 ADR-012 与 `docs/development/draft-projects.md`。
+本轮增加已有 Excel 的新增/文字编辑 Safe Sync（ADR-013），并完成 144 种生成布局、120 种
+新建编辑场景及两种私有 Sheet 的副本写回验证。详见 `docs/gates/layout-editing-matrix.md`。
 
 目标：本地 APP 与 Agent/人工通过文件协作。
 

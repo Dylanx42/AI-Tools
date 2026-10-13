@@ -14,6 +14,7 @@ from openpyxl.utils import get_column_letter
 from racktool.core.identity import new_entity_id, normalize_path, sha256_file
 from racktool.core.project import project_error_conflicts
 from racktool.core.templates import _virtual_rack, create_empty_rack_project
+from racktool.core.text import validate_excel_text
 from racktool.models.domain import Device, Placement, Rack
 from racktool.models.project import RackProject, SourceMapping
 from racktool.persistence import load_project, save_project
@@ -95,8 +96,7 @@ def _edit_draft(database: Path, edit: Callable[[RackProject], RackProject]) -> R
 
 
 def _text(value: str) -> str:
-    if not value.strip() or len(value) > 32_767:
-        raise ValueError("名称或设备文字不能为空，且不能超过 Excel 的 32767 字符上限。")
+    validate_excel_text(value)
     return value
 
 
@@ -125,7 +125,7 @@ def add_draft_rack(
     database: Path, rack_name: str, *, height_u: int = 42, row: int = 1,
 ) -> RackProject:
     """Append a cabinet to an existing band or the next new band (row is one-based)."""
-    name = _text(rack_name.strip())
+    name = _text(rack_name).strip()
     if not 1 <= height_u <= 100:
         raise ValueError("机柜高度应为 1–100 U。")
 

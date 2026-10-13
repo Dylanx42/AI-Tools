@@ -45,7 +45,8 @@ export_project_workbook(project, Path("new-project.xlsx"))
 ## 与现有项目的边界
 
 - `project import` 得到的是已绑定源 XLSX 的项目，不能使用这组新建项目编辑命令。
-- 已绑定项目的设备移动继续使用 `sync move` / GUI 待同步与 Safe Sync；新增、改名写回尚待设计。
+- 已绑定项目的设备移动继续使用 `sync move` / GUI 待同步与 Safe Sync；新增/文字修改使用
+  `sync add-device` / `sync rename`，先查看计划，再显式 `--commit`，不能使用新建项目编辑入口。
 - 新项目的内部 Mapping 是虚拟布局坐标，不是导出 XLSX 的实际单元格位置。
 - 新项目 ID 在同一个 SQLite 内保持稳定；导出再 import 会形成另一份项目身份，不能代替保留
   原 SQLite 的备份。

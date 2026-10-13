@@ -18,8 +18,10 @@ from racktool.core.service import (
 from racktool.core.sync import (
     MoveRequest,
     apply_writeback,
+    plan_device_add,
     plan_device_move,
     plan_device_moves,
+    plan_device_rename,
 )
 from racktool.core.templates import create_empty_rack_project
 from racktool.core.workbook import scan_workbook
@@ -39,8 +41,10 @@ __all__ = [
     "import_project",
     "import_workbook",
     "load_project_state",
+    "plan_device_add",
     "plan_device_move",
     "plan_device_moves",
+    "plan_device_rename",
     "rescan_project",
     "rescan_workbook",
     "restore_project_backup",

@@ -22,7 +22,7 @@ from racktool.core.service import (
     load_project_state,
     rescan_project,
 )
-from racktool.core.sync import plan_device_move
+from racktool.core.sync import plan_device_add, plan_device_move, plan_device_rename
 from racktool.profiles import apply_profile, fingerprint_workbook, load_profile, select_profile
 
 
@@ -120,6 +120,20 @@ def build_parser() -> argparse.ArgumentParser:
     rescan_parser.add_argument("database", type=Path)
     sync_parser = subparsers.add_parser("sync", help="plan or apply a safe workbook write-back")
     sync_subparsers = sync_parser.add_subparsers(dest="sync_command", required=True)
+    add_sync = sync_subparsers.add_parser("add-device", help="plan or safely add a device to a bound XLSX")
+    add_sync.add_argument("workbook", type=Path)
+    add_sync.add_argument("database", type=Path)
+    add_sync.add_argument("rack_id")
+    add_sync.add_argument("start_u", type=int)
+    add_sync.add_argument("end_u", type=int)
+    add_sync.add_argument("--text", required=True)
+    add_sync.add_argument("--commit", action="store_true", help="commit after backups and validation")
+    rename_sync = sync_subparsers.add_parser("rename", help="plan or safely edit device text in a bound XLSX")
+    rename_sync.add_argument("workbook", type=Path)
+    rename_sync.add_argument("database", type=Path)
+    rename_sync.add_argument("device_id")
+    rename_sync.add_argument("--text", required=True)
+    rename_sync.add_argument("--commit", action="store_true", help="commit after backups and validation")
     move_parser = sync_subparsers.add_parser("move", help="move a device to a rack/U range")
     move_parser.add_argument("workbook", type=Path)
     move_parser.add_argument("database", type=Path)
@@ -272,17 +286,19 @@ def _project_command(args: argparse.Namespace) -> int:
 
 
 def _sync_command(args: argparse.Namespace) -> int:
-    if args.sync_command != "move":
-        return 1
     project = load_project_state(args.database)
-    plan = plan_device_move(
-        project,
-        args.device_id,
-        args.rack_id,
-        args.start_u,
-        args.end_u,
-        workbook_path=args.workbook,
-    )
+    if args.sync_command == "move":
+        plan = plan_device_move(
+            project, args.device_id, args.rack_id, args.start_u, args.end_u, workbook_path=args.workbook,
+        )
+    elif args.sync_command == "add-device":
+        plan = plan_device_add(
+            project, args.rack_id, args.start_u, args.end_u, args.text, workbook_path=args.workbook,
+        )
+    elif args.sync_command == "rename":
+        plan = plan_device_rename(project, args.device_id, args.text, workbook_path=args.workbook)
+    else:
+        return 1
     if not args.commit:
         print(json.dumps(plan.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not plan.conflicts else 2

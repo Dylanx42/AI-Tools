@@ -46,8 +46,10 @@ Ruff、strict mypy 和新版 Qt offscreen 冒烟检查通过。历史 macOS nati
 单格导出与空模板统一记录见 [2026-10-09 导出优化](docs/updates/2026-10-09.md)。
 陌生布局交接能力见 [2026-10-13 分析包](docs/updates/2026-10-13-analysis-package.md)。
 新建项目与设备编辑见 [2026-10-13 编辑流程](docs/updates/2026-10-13-project-editing.md)。
-2026-10-13 两项 Core/CLI 能力整合后，云端完整测试为 184 passed、0 skipped；Ruff、strict
-mypy 与 Qt offscreen 冒烟通过。GUI 接入和实机发布验收继续待完成。
+本轮压力验证与安全写回见 [2026-10-13 布局与编辑验证](docs/updates/2026-10-13-layout-stress.md)。
+2026-10-13 布局与编辑矩阵扩展后，云端完整测试为 **484 passed、0 skipped**；Ruff、strict
+mypy 与 Qt offscreen 冒烟通过。144 种生成布局组合和 120 种新建项目场景均通过，详见
+[布局编辑验证矩阵](docs/gates/layout-editing-matrix.md)。GUI 接入和实机发布验收继续待完成。
 
 ## Windows 便携版（同事测试）
 
@@ -115,6 +117,8 @@ racktool project import path/to/rack-layout.xlsx path/to/project.sqlite --profil
 racktool project rescan path/to/rack-layout.xlsx path/to/project.sqlite
 racktool sync move path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID RACK_ID START_U END_U
 racktool sync move --commit path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID RACK_ID START_U END_U
+racktool sync add-device path/to/rack-layout.xlsx path/to/project.sqlite RACK_ID START_U END_U --text "新设备"
+racktool sync rename path/to/rack-layout.xlsx path/to/project.sqlite DEVICE_ID --text "更新后的设备文字"
 racktool export path/to/project.sqlite path/to/racktool-export.xlsx
 racktool gui path/to/rack-layout.xlsx
 # 或
@@ -125,7 +129,11 @@ python -m racktool analyze path/to/rack-layout.xlsx
 命令把 UTF-8 JSON 写到标准输出。输入必须是现有的 `.xlsx` 文件。`inspect`、`analyze` 和
 `profile` 不修改源工作簿；`project import` 的 `--profile PATH` 是可选参数。`project import/rescan`
 也不写 XLSX，但会创建或更新 SQLite 项目状态。
-只有 `sync move --commit` 会在冲突检查、备份、临时写入、重载校验后事务式更新 XLSX 和 SQLite。
+`sync move`、`sync add-device`、`sync rename` 默认只输出计划；增加 `--commit` 才会在冲突检查、
+备份、临时写入、重载校验后事务式更新 XLSX 和 SQLite。新增使用机柜整个连续设备区，改名保留
+原 ID、U 范围、合并与样式；注释、超链接、数据验证、命名区域或未知内容相交时拒绝写入。
+新增/改名文字按字面量保存，`=` 开头也不会变成公式；移动保留原单元格的文字/公式类型。
+非法 XML 控制字符与无效 Unicode 在写入前被拒绝，新建项目也使用同一校验。
 `export` 只读取已保存的项目状态，新建一个含“机柜图”和“设备位置表”的标准 `.xlsx`；机柜图
 按照源工作表顺序和每一排的原始列顺序横向排列，不再按固定数量换行，并为合并的机柜标题和设备
 区域绘制完整外框。它通过临时文件、重载验证和原子替换生成导出文件，不写源工作簿。命令行默认不覆盖已有导出，确需覆盖时
@@ -187,6 +195,16 @@ racktool export new-project.sqlite new-project.xlsx
 ## 明确不支持
 
 当前不包含资产表对账、Agent/云 API、Shape/SmartArt、VBA、Office COM，或跨 Sheet 设备移动。
+
+## 批量布局与编辑回归
+
+```bash
+python scripts/stress_layouts.py --output /path/to/new-evidence-directory
+```
+
+生成并实际验证 144 种布局组合、120 种新建项目场景，输出原始/编辑后/标准导出的样本、独立
+expected、CSV、报告和 ZIP。合成样本来自 6 类结构的组合，不冒充行业格式或额外真实 Golden；
+24 个坐标布局需要显式 Profile。结果及复现说明见 [布局编辑验证矩阵](docs/gates/layout-editing-matrix.md)。
 
 项目约束和后续设计见[产品需求](docs/product/requirements.md)、
 [架构总览](docs/architecture/overview.md)、[数据模型](docs/architecture/data-model.md)和
