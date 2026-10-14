@@ -1,27 +1,28 @@
 # 命令参考
 
-使用已安装 RackTool 的 Python 执行 `python -m racktool`。下列占位参数必须替换成真实路径与
-模型 ID，参数用数组传给 subprocess，或正确 shell 引号；不要把业务文字拼成 shell 代码。
+独立包使用 Python 3.11+ 执行技能目录中的 scripts/run.py。下面为方便阅读使用相对路径；
+实际调用时替换为脚本和业务文件的绝对路径。仓库开发环境改用 python -m racktool。
+占位 ID 从 Core 输出获取，参数用数组传给 subprocess 或正确 shell 引号，勿把业务文字拼成代码。
 
 ```bash
-python -m racktool analyze source.xlsx
-python -m racktool analysis-package source.xlsx analysis.zip
-python -m racktool profile validate layout.yaml
-python -m racktool profile apply source.xlsx layout.yaml
-python -m racktool project import working.xlsx project.sqlite
-python -m racktool project import working.xlsx project.sqlite --profile layout.yaml
-python -m racktool project show project.sqlite
-python -m racktool project rescan working.xlsx project.sqlite
+python scripts/run.py analyze source.xlsx
+python scripts/run.py analysis-package source.xlsx analysis.zip
+python scripts/run.py profile validate layout.yaml
+python scripts/run.py profile apply source.xlsx layout.yaml
+python scripts/run.py project import working.xlsx project.sqlite
+python scripts/run.py project import working.xlsx project.sqlite --profile layout.yaml
+python scripts/run.py project show project.sqlite
+python scripts/run.py project rescan working.xlsx project.sqlite
 ```
 
 同步命令默认是只读预览；检查计划后在同一组参数加 `--commit`：
 
 ```bash
-python -m racktool sync move working.xlsx project.sqlite DEVICE_ID RACK_ID 21 22
-python -m racktool sync add-device working.xlsx project.sqlite RACK_ID 21 22 --text "设备完整文字"
-python -m racktool sync rename working.xlsx project.sqlite DEVICE_ID --text "更新后的完整文字"
-python -m racktool export project.sqlite result.xlsx --layout source
-python -m racktool export project.sqlite standard.xlsx --layout standard
+python scripts/run.py sync move working.xlsx project.sqlite DEVICE_ID RACK_ID 21 22
+python scripts/run.py sync add-device working.xlsx project.sqlite RACK_ID 21 22 --text "设备完整文字"
+python scripts/run.py sync rename working.xlsx project.sqlite DEVICE_ID --text "更新后的完整文字"
+python scripts/run.py export project.sqlite result.xlsx --layout source
+python scripts/run.py export project.sqlite standard.xlsx --layout standard
 ```
 
 导出默认不覆盖，已有目标请选新名字。只有用户明确要求覆盖该输出才加 `--force`。
@@ -31,12 +32,12 @@ Safe Sync 自动备份、临时写入、重载校验、提交并更新 SQLite；
 新建未绑定项目：
 
 ```bash
-python -m racktool project create draft.sqlite --count 18 --height 42
-python -m racktool project add-rack draft.sqlite C01 --row 3 --height 47
-python -m racktool project add-device draft.sqlite --rack A01 --start-u 21 --end-u 22 --text "服务器"
-python -m racktool project edit-device draft.sqlite DEVICE_ID --text "服务器新名称"
-python -m racktool project edit-device draft.sqlite DEVICE_ID --rack B01 --start-u 31 --end-u 34
-python -m racktool export draft.sqlite draft.xlsx
+python scripts/run.py project create draft.sqlite --count 18 --height 42
+python scripts/run.py project add-rack draft.sqlite C01 --row 3 --height 47
+python scripts/run.py project add-device draft.sqlite --rack A01 --start-u 21 --end-u 22 --text "服务器"
+python scripts/run.py project edit-device draft.sqlite DEVICE_ID --text "服务器新名称"
+python scripts/run.py project edit-device draft.sqlite DEVICE_ID --rack B01 --start-u 31 --end-u 34
+python scripts/run.py export draft.sqlite draft.xlsx
 ```
 
 新建项目命令直接保存 SQLite，导出产生 Excel；重新导入导出文件形成另一份身份，不能代替
