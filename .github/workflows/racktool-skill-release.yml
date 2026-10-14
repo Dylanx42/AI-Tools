@@ -1,0 +1,132 @@
+name: RackTool Skill release
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/racktool-skill-release.yml"
+      - "projects/racktool/skills/**"
+      - "projects/racktool/scripts/build_skill_bundle.py"
+      - "projects/racktool/bundle-requirements.txt"
+  push:
+    tags:
+      - "racktool-skill-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: racktool-skill-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: projects/racktool
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install fixed build dependencies
+        run: python -m pip install -r bundle-requirements.txt
+      - name: Select bundle version
+        env:
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+          if os.environ['RELEASE_REF'].startswith('refs/tags/'):
+              tag = os.environ['RELEASE_REF_NAME']
+              if not re.fullmatch(r'racktool-skill-v[0-9]+(?:\.[0-9]+){3}', tag):
+                  raise SystemExit('Invalid RackTool Skill release tag')
+              version = tag.removeprefix('racktool-skill-v')
+          else:
+              version = 'ci-' + os.environ['GITHUB_SHA'][:12]
+          with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as stream:
+              stream.write('BUNDLE_VERSION=' + version + '\n')
+          PY
+      - name: Build complete portable Skill
+        run: |
+          python scripts/build_skill_bundle.py --version "$BUNDLE_VERSION" --output dist/RackTool-Skill.zip
+          cp skills/racktool/INSTALL.md dist/INSTALL.md
+          cp skills/racktool/LOCAL_ACCEPTANCE.md dist/LOCAL_ACCEPTANCE.md
+      - name: Verify detached bundle with no site-packages
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, subprocess, sys, tempfile
+          from pathlib import Path
+          from zipfile import ZipFile
+          archive = Path('dist/RackTool-Skill.zip').resolve()
+          assert archive.with_suffix('.zip.sha256').read_text().split()[0] == hashlib.sha256(archive.read_bytes()).hexdigest()
+          with tempfile.TemporaryDirectory(prefix='racktool release with spaces ') as directory:
+              root = Path(directory) / 'racktool'
+              with ZipFile(archive) as zipped:
+                  meta = json.loads(zipped.read('bundle.json'))
+                  assert not meta['source_dirty']
+                  assert meta['source_commit'] == subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+                  assert meta['bundle_version'] == os.environ['BUNDLE_VERSION']
+                  zipped.extractall(root)
+              runner = root / 'scripts' / 'run.py'
+              env = dict(os.environ, PYTHONIOENCODING='ascii', PYTHONPATH='')
+              def run(*args):
+                  return subprocess.run([sys.executable, '-S', str(runner), *map(str, args)], cwd=directory,
+                                        env=env, check=True, capture_output=True, encoding='utf-8')
+              run('--verify')
+              info = json.loads(run('--bundle-info').stdout)
+              assert all(Path(path).is_relative_to(root) for path in info['loaded_from'].values())
+              assert not info['yaml_native_extension']
+              run('profile', 'validate', root / 'core/src/racktool/profiles/generic-mixed-axis.yaml')
+              database = Path(directory) / 'draft.sqlite'
+              run('project', 'create', database, '--count', '18', '--height', '42')
+              run('project', 'add-device', database, '--rack', 'A01', '--start-u', '21', '--end-u', '22', '--text', '发布测试设备')
+              run('project', 'show', database)
+              run('export', database, Path(directory) / 'draft.xlsx')
+          print('Detached package, UTF-8, YAML, draft editing and export verified')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: racktool-skill
+          path: |
+            projects/racktool/dist/RackTool-Skill.zip
+            projects/racktool/dist/RackTool-Skill.zip.sha256
+            projects/racktool/dist/INSTALL.md
+            projects/racktool/dist/LOCAL_ACCEPTANCE.md
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/racktool-skill-v')
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: racktool-skill
+          path: dist
+      - name: Publish complete package to the project release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          if not re.fullmatch(r'racktool-skill-v[0-9]+(?:\.[0-9]+){3}', tag):
+              raise SystemExit('Invalid RackTool Skill release tag')
+          Path('dist/RELEASE_NOTES.md').write_text(
+              '完整 RackTool Skill：包含 RackCore、CLI、Profile、纯 Python 依赖及许可证。\n\n'
+              '直接下载 RackTool-Skill.zip 和校验值，按 INSTALL.md 安装；使用者无需拉取源码或构建。\n\n'
+              '需要 Python 3.11+ 和 Agent 本机脚本能力，不包含 Python 解释器、GUI 或业务数据。\n'
+              '包发布和 Core 检查通过不代表各 Agent 软件的本机兼容性已验收。\n', encoding='utf-8')
+          PY
+          gh release create "$RELEASE_TAG" dist/RackTool-Skill.zip dist/RackTool-Skill.zip.sha256 dist/INSTALL.md dist/LOCAL_ACCEPTANCE.md --verify-tag --title "RackTool Skill ${RELEASE_TAG#racktool-skill-v}" --notes-file dist/RELEASE_NOTES.md --latest=false

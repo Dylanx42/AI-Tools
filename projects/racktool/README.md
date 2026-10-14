@@ -11,7 +11,8 @@ AI 负责理解、唯一定位和调用 CLI，RackCore 继续负责确定性解�
 
 推荐安装版本化独立包：其中包含 RackCore、CLI、Profile 和固定版本纯 Python 依赖，
 **本地使用/验收不需要克隆整个 AI-Tools 仓库，也不需要 pip 安装或 Qt**，但仍需 Python 3.11+。
-旧 `RackTool-Skill.zip` 只有说明，不能当作新独立包。当前分发为会话附件，尚未发布 GitHub Release。
+之前的未带版本会话 ZIP 只有说明；正式 Release 的 `RackTool-Skill.zip` 则含 Core 与依赖。
+普通安装从[安装说明](skills/racktool/INSTALL.md)所列发布链接下载，不拉源码、不在本机构建。
 
 - [Codex / WorkBuddy / TRAE 安装、更新和回滚](skills/racktool/INSTALL.md)
 - [三层本地验收规范](skills/racktool/LOCAL_ACCEPTANCE.md)
