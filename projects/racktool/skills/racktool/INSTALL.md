@@ -1,11 +1,11 @@
 # RackTool Skill 安装与更新
 
-适用版本：独立包 `2026.10.14.1`；安装方式核对日期：2026-10-14。
+适用版本：独立包 `2026.10.15.1`；安装方式核对日期：2026-10-15。
 
 ## 先分清两种包
 
-- 旧的 `RackTool-Skill.zip` 仅含说明，依赖已有 RackTool 仓库和 Python 环境。
-- 新的 `RackTool-Skill-2026.10.14.1.zip` 包含 RackCore、CLI、Profile、技能说明、安装器，以及
+- 旧的无版本会话附件 `RackTool-Skill.zip` 仅含说明，依赖已有 RackTool 仓库和 Python 环境。
+- 正式发布 `racktool-skill-v2026.10.15.1` 下的 `RackTool-Skill.zip` 包含 RackCore、CLI、Profile、技能说明、安装器，以及
   openpyxl / et_xmlfile / PyYAML 的固定版本纯 Python 依赖和许可证。安装后不用克隆 AI-Tools，
   不用 pip 安装 RackTool，不需要 GUI/Qt，也不用访问 GitHub 才能解析或编辑 Excel。
 - 包不包含 Python 解释器、Agent 软件、业务 Excel、项目 SQLite。电脑需要 Python 3.11+，
@@ -13,15 +13,25 @@
   [Python 官方下载页](https://www.python.org/downloads/)安装。Core 离线运行；
   AI 对话是否联网由所用 Agent 决定。
 
-本轮 ZIP 和 SHA256 作为会话附件提供。源码、此文档和构建脚本保存在
-[GitHub 项目主页](https://github.com/Dylanx42/AI-Tools/tree/main/projects/racktool)。
-当前未发布 GitHub Release；仓库的“Download ZIP”是源码包，不能替代此独立安装包。
+## 成品包下载（普通安装）
+
+- [完整 ZIP](https://github.com/Dylanx42/AI-Tools/releases/download/racktool-skill-v2026.10.15.1/RackTool-Skill.zip)
+- [SHA256 校验文件](https://github.com/Dylanx42/AI-Tools/releases/download/racktool-skill-v2026.10.15.1/RackTool-Skill.zip.sha256)
+- [发布页](https://github.com/Dylanx42/AI-Tools/releases/tag/racktool-skill-v2026.10.15.1)
+
+以上路径用于本次正式发布；下载前确认发布页已存在并有对应附件。普通安装直接下载发布附件，
+**不拉源码、不自行构建、不执行源码模式 install_skill.py**。下载失败时报告失败，不退回开发者构建。
+GitHub 仓库的“Download ZIP”是源码包；仅 SKILL.md 或源码技能目录也不包含完整依赖。
+
+## 一句话交给 Agent 安装
+
+> 请从 https://github.com/Dylanx42/AI-Tools 的 main 分支读取 projects/racktool/skills/racktool/INSTALL.md，按其中正式发布链接下载并核验含 Core 和依赖的完整 RackTool Skill，为当前软件安装并报告包版本及实际加载路径，保留旧安装和业务原图，不拉源码、不自行构建，下载或导入失败时报告实际原因。
 
 ## Codex：推荐完整目录安装
 
 不想操作终端时，下载新版 ZIP 后在本机 Codex 对话中说：
 
-> 把下载目录里的 RackTool-Skill-2026.10.14.1.zip 完整安装为本机 Codex 的 racktool Skill。
+> 把下载目录里的 RackTool-Skill.zip 完整安装为本机 Codex 的 racktool Skill。
 > 检查 Python 3.11+；已有同名安装先移出技能目录备份。安装后校验包，报告版本和实际 Core 路径。
 > 不更新整个 AI-Tools 仓库，不改业务原图。
 
@@ -88,14 +98,15 @@ TRAE CLI 的目录另有规则，不要把 IDE 的路径当成 CLI 的路径。
 5. 回滚时恢复旧技能目录和对应状态备份；单纯换代码不能保证兼容未来新版数据库格式。
    卸载只移除技能目录，不删除业务工作目录。
 
-## 开发者重建包（使用者无需执行）
+## 开发者发布流程（普通安装禁止使用）
 
-从明确 Git 提交的干净仓库，在项目开发环境安装 `bundle-requirements.txt` 的固定版本后：
+开发者在云端/GitHub 构建。普通用户与负责安装的 Agent 不采用这一流程。
+更新本文件的版本/链接，通过 PR 合入 main，确认当前提交通过检查后，创建新的不可变标签
+`racktool-skill-vYYYY.MM.DD.N` 并推送。专用 RackTool Skill release 工作流会构建完整包，
+在没有 site-packages 的隔离环境核验后，发布 ZIP、SHA256 与安装/验收文档。
+本 monorepo 包含多个项目，不使用仓库全局 latest/download 作为 RackTool 的固定入口。
 
-```bash
-python scripts/build_skill_bundle.py --version 2026.10.14.1 --output dist/RackTool-Skill-2026.10.14.1.zip
-```
-
-包内 `bundle.json` 记录 Git 提交、是否脏工作区、依赖版本；`checksums.json` 记录所有有效载荷。
-发布只使用 `source_dirty=false` 的包。版本号属于 Skill 交付包，不等同 Core 历史 `0.1.0`。
-构建只选择 Core/CLI/Profile、技能文件和依赖；真实数据和 GUI 不进入包。
+开发者本地重建仅作调试：在隔离环境安装 bundle-requirements.txt 后运行
+`python scripts/build_skill_bundle.py --version 2026.10.15.1 --output dist/RackTool-Skill.zip`。
+包记录 Git 提交、dirty 状态、依赖版本和文件 SHA256，发布只接受 source_dirty=false。
+代码/文档和包版本改变后发布新标签，不覆盖旧 Release 或移动既有标签。
