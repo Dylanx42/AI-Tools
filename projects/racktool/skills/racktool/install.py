@@ -35,7 +35,9 @@ def main() -> int:
         runner.verify()
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    shutil.copytree(source, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(
+        "__pycache__", "*.pyc", ".DS_Store", "Thumbs.db", "desktop.ini",
+    ))
     print(f"Skill installed: {destination}")
     print("刷新/重启 Agent，要求它运行 scripts/run.py --verify 和 --bundle-info 后再开始验收。")
     return 0

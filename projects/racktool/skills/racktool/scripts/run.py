@@ -9,12 +9,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+OS_METADATA = {".DS_Store", "Thumbs.db", "desktop.ini"}
 
 
 def verify() -> None:
     expected = json.loads((ROOT / "checksums.json").read_text(encoding="utf-8"))
     actual = {path.relative_to(ROOT).as_posix(): path for path in ROOT.rglob("*")
               if path.is_file() and path != ROOT / "checksums.json"
+              and path.name not in OS_METADATA
               and "__pycache__" not in path.parts and path.suffix != ".pyc"}
     if set(actual) != set(expected):
         raise ValueError("包文件清单不一致；请重新解压完整安装包。")

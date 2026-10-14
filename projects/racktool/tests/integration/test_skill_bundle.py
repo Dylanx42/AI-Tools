@@ -140,9 +140,17 @@ def test_bundle_integrity_rejects_corruption(bundle: Path, tmp_path: Path, chang
 
 
 def test_install_is_complete_and_preserves_existing_install(bundle: Path, tmp_path: Path) -> None:
+    import shutil
+
+    copied = tmp_path / "Finder-extracted"
+    shutil.copytree(bundle, copied)
+    for name in (".DS_Store", "Thumbs.db", "desktop.ini"):
+        (copied / name).write_bytes(b"operating system metadata")
+    run(copied, "--verify")
     destination = tmp_path / "skills with spaces" / "racktool"
-    command = [sys.executable, "-S", str(bundle / "install.py"), "--destination", str(destination)]
+    command = [sys.executable, "-S", str(copied / "install.py"), "--destination", str(destination)]
     subprocess.run(command, check=True, capture_output=True, encoding="utf-8")
+    assert not (destination / ".DS_Store").exists()
     run(destination, "--verify")
     info = json.loads(run(destination, "--bundle-info").stdout)
     assert Path(info["loaded_from"]["racktool"]).is_relative_to(destination)
