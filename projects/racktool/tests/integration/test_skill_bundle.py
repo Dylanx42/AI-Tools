@@ -23,7 +23,7 @@ def bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
     subprocess.run([
         sys.executable, str(PROJECT / "scripts" / "build_skill_bundle.py"),
         "--version", "test.1", "--output", str(archive),
-    ], check=True, capture_output=True, text=True)
+    ], check=True, capture_output=True, encoding="utf-8")
     with ZipFile(archive) as zipped:
         names = zipped.namelist()
         assert "SKILL.md" in names
@@ -39,10 +39,10 @@ def bundle(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def run(bundle: Path, *arguments: str, success: bool = True) -> subprocess.CompletedProcess[str]:
     # -S removes site-packages; even an unrelated PYTHONPATH cannot replace bundled modules.
-    env = dict(os.environ, PYTHONPATH=str(bundle.parent / "unrelated"))
+    env = dict(os.environ, PYTHONPATH=str(bundle.parent / "unrelated"), PYTHONIOENCODING="ascii")
     result = subprocess.run([
         sys.executable, "-S", str(bundle / "scripts" / "run.py"), *arguments,
-    ], cwd=bundle.parent, env=env, text=True, capture_output=True, check=False)
+    ], cwd=bundle.parent, env=env, encoding="utf-8", capture_output=True, check=False)
     assert (result.returncode == 0) is success, result.stderr + result.stdout
     return result
 
@@ -66,7 +66,7 @@ def test_bundle_runs_draft_edits_and_refuses_conflicts(bundle: Path, tmp_path: P
     analyzed = analyze_workbook(output)
     assert sum(len(sheet.racks) for sheet in analyzed.sheets) == 36
     run(bundle, "project", "add-device", str(database), "--rack", "A01",
-        "--start-u", "21", "--end-u", "22", "--text", "portable test")
+        "--start-u", "21", "--end-u", "22", "--text", "portable 测试")
     before = database.read_bytes()
     run(bundle, "project", "add-device", str(database), "--rack", "A01",
         "--start-u", "22", "--end-u", "23", "--text", "collision", success=False)
@@ -74,11 +74,11 @@ def test_bundle_runs_draft_edits_and_refuses_conflicts(bundle: Path, tmp_path: P
     state = json.loads(run(bundle, "project", "show", str(database)).stdout)
     device_id = state["devices"][0]["device_id"]
     run(bundle, "project", "edit-device", str(database), device_id,
-        "--rack", "B18", "--start-u", "31", "--end-u", "32", "--text", "renamed")
+        "--rack", "B18", "--start-u", "31", "--end-u", "32", "--text", "renamed 设备")
     run(bundle, "export", str(database), str(tmp_path / "edited.xlsx"))
     state = json.loads(run(bundle, "project", "show", str(database)).stdout)
     assert state["devices"][0]["device_id"] == device_id
-    assert state["devices"][0]["display_text"] == "renamed"
+    assert state["devices"][0]["display_text"] == "renamed 设备"
 
 
 @pytest.mark.parametrize("rack_name", ["A01", "B01"])
@@ -135,18 +135,18 @@ def test_bundle_integrity_rejects_corruption(bundle: Path, tmp_path: Path, chang
     destination = tmp_path / "installed"
     result = subprocess.run([
         sys.executable, "-S", str(copied / "install.py"), "--destination", str(destination),
-    ], text=True, capture_output=True, check=False)
+    ], encoding="utf-8", capture_output=True, check=False)
     assert result.returncode != 0 and not destination.exists()
 
 
 def test_install_is_complete_and_preserves_existing_install(bundle: Path, tmp_path: Path) -> None:
     destination = tmp_path / "skills with spaces" / "racktool"
     command = [sys.executable, "-S", str(bundle / "install.py"), "--destination", str(destination)]
-    subprocess.run(command, check=True, capture_output=True, text=True)
+    subprocess.run(command, check=True, capture_output=True, encoding="utf-8")
     run(destination, "--verify")
     info = json.loads(run(destination, "--bundle-info").stdout)
     assert Path(info["loaded_from"]["racktool"]).is_relative_to(destination)
     before = (destination / "checksums.json").read_bytes()
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(command, capture_output=True, encoding="utf-8", check=False)
     assert result.returncode != 0
     assert (destination / "checksums.json").read_bytes() == before

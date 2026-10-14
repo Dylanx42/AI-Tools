@@ -24,6 +24,9 @@ def verify() -> None:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     if sys.version_info < (3, 11):  # noqa: UP036 - standalone bootstrap
         print("RackTool Skill 需要 Python 3.11+。", file=sys.stderr)
         return 2

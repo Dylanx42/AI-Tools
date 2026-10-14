@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import shutil
+import sys
 from pathlib import Path
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent", choices=("codex", "trae-cn"), default="codex")
     parser.add_argument("--destination", type=Path)

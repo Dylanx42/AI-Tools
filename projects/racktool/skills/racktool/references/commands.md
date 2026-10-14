@@ -2,6 +2,7 @@
 
 独立包使用 Python 3.11+ 执行技能目录中的 scripts/run.py。下面为方便阅读使用相对路径；
 实际调用时替换为脚本和业务文件的绝对路径。仓库开发环境改用 python -m racktool。
+独立入口的输出编码固定为 UTF-8；调用方捕获/读取 JSON 时也使用 UTF-8。
 占位 ID 从 Core 输出获取，参数用数组传给 subprocess 或正确 shell 引号，勿把业务文字拼成代码。
 
 ```bash
