@@ -9,16 +9,17 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 GUI 为历史可选客户端，不要求继续使用；旧 headless PASS 不能代表 GUI 人工可用。
 AI 负责理解、唯一定位和调用 CLI，RackCore 继续负责确定性解析、冲突检查、备份和写入。
 
-在支持 Skills 的本地 Codex 中，从本项目目录安装：
+推荐安装版本化独立包：其中包含 RackCore、CLI、Profile 和固定版本纯 Python 依赖，
+**本地使用/验收不需要克隆整个 AI-Tools 仓库，也不需要 pip 安装或 Qt**，但仍需 Python 3.11+。
+旧 `RackTool-Skill.zip` 只有说明，不能当作新独立包。当前分发为会话附件，尚未发布 GitHub Release。
 
-```bash
-python scripts/install_skill.py
-```
+- [Codex / WorkBuddy / TRAE 安装、更新和回滚](skills/racktool/INSTALL.md)
+- [三层本地验收规范](skills/racktool/LOCAL_ACCEPTANCE.md)
+- [RackTool Skill 行为规范](skills/racktool/SKILL.md)
+- [独立包实现与验收记录](docs/updates/2026-10-14-portable-skill.md)
 
-安装到 `~/.agents/skills/racktool`，已存在时保留并拒绝覆盖；加载/刷新后可说
-“$racktool 看一下这份机柜图”或“把这个机房 A01 的设备移到 A03 的 21–22U，导出给我”。
-技能规范和边界见 [RackTool Skill](skills/racktool/SKILL.md)。Core 只需 Python 3.11+，
-安装 `python -m pip install -e .`，不需要 Qt。安装/同步必须在实际持有本地文件的执行环境完成。
+仓库开发者仍可用 `python scripts/install_skill.py` 安装指向源码的开发技能；
+这与独立包的 `install.py` 不同，不用于证明脱离仓库运行。安装必须在实际持有本地文件的机器完成。
 
 导出提供两种版面：
 

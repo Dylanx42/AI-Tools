@@ -5,6 +5,8 @@
 用户已报告 GUI 排序/缩放控件空白并放弃 GUI 使用，**本地 GUI 可用性验收失败**。
 主线改为 Skill + AI 对话 → RackCore/CLI，保留 GUI 代码和历史测试，不新增 GUI 使用步骤。
 本轮落地 RackTool Skill、机房分 Sheet、混合 U 方向和原版面导出，详见 ADR-014。
+独立 Skill 包已包含 Core/CLI/固定依赖，本地使用无需全量同步仓库；安装、Agent 调用及 Excel/WPS
+三层验收见 [规范](../../skills/racktool/LOCAL_ACCEPTANCE.md) 与 ADR-015。
 后续优先自然语言唯一对象定位、布局适配、现有写回限制和 Excel/WPS 输出验收；
 历史 GUI 待办不是当前阻塞，下面旧阶段结果保留为带日期历史记录。
 

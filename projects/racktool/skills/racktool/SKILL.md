@@ -8,9 +8,12 @@ description: 用 AI 对话管理基于单元格和合并单元格的 Excel 机�
 用户只需提供 XLSX 或路径，说明想查什么或改什么。你负责理解请求、选择唯一对象、调用
 RackCore 和交付文件；不要让用户填写设备 ID、执行 CLI 或操作 GUI。
 
-先阅读 [操作流程](references/workflow.md) 和 [命令](references/commands.md)。安装目录有
-`runtime.json` 时，读取其中的 `project_root` 定位 RackTool 源码；否则从当前工作区寻找
-`projects/racktool/pyproject.toml`。使用该项目的 Python 环境，不依赖 Qt。
+先阅读 [操作流程](references/workflow.md) 和 [命令](references/commands.md)。独立包安装目录有
+`bundle.json` 时，使用 Python 3.11+ 调用该目录的 `scripts/run.py`，首次调用先执行 `--verify`
+和 `--bundle-info`，确认实际 Core 与依赖来自包内。所有路径根据技能目录绝对定位，不假设
+用户当前目录是技能目录；业务文件放到技能目录之外。安装和验收见 INSTALL.md / LOCAL_ACCEPTANCE.md。
+开发模式没有 bundle.json 时，读取 runtime.json 的 project_root，或寻找
+projects/racktool/pyproject.toml，使用项目环境的 python -m racktool；不要把旧仓库环境当成独立包。
 
 ## 处理请求
 
