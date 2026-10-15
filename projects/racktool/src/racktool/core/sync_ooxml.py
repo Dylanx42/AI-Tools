@@ -136,12 +136,33 @@ def _preserved_styles(original: bytes, generated: bytes) -> bytes:
     # Excel/WPS accept empty fill records; normalize only those raw elements so
     # the written result can also be opened by plain openpyxl. Keep extensions raw.
     if _normalize_empty_fills(original) is not None:
-        for match in reversed(_spans(original, "fill")):
+        parsed_fills = ET.fromstring(original).find(f"{{{MAIN}}}fills")
+        assert parsed_fills is not None
+        parsed_fills.tail = None
+        root_opening, _, root_closing = _body(_spans(original, "styleSheet")[0].group())
+        containers = []
+        for candidate in _spans(original, "fills"):
+            try:
+                parsed = ET.fromstring(root_opening + candidate.group() + root_closing).find(f"{{{MAIN}}}fills")
+            except ET.ParseError:
+                # An extension may use prefixes scoped outside this candidate.
+                continue
+            if parsed is not None and ET.tostring(parsed) == ET.tostring(parsed_fills):
+                containers.append(candidate)
+        if len(containers) != 1:
+            raise ValueError("Safe Sync cannot identify the standard fills container")
+        container = containers[0]
+        fills_xml = container.group()
+        matches = _spans(fills_xml, "fill")
+        if len(matches) != len(parsed_fills) or any(child.tag != f"{{{MAIN}}}fill" for child in parsed_fills):
+            raise ValueError("Safe Sync cannot preserve unknown fills container content")
+        for match in reversed(matches):
             opening, body, closing = _body(match.group())
             if not body.strip():
                 prefix = match.group("tag").removesuffix(b"fill")
                 replacement = opening + b"<" + prefix + b"patternFill/>" + closing
-                original = original[:match.start()] + replacement + original[match.end():]
+                fills_xml = fills_xml[:match.start()] + replacement + fills_xml[match.end():]
+        original = original[:container.start()] + fills_xml + original[container.end():]
     merged = _merge_styles(original, generated)
     output = Stylesheet.from_tree(cast(Any, ET.fromstring(_normalize_empty_fills(merged) or merged)))
     for name in ("fonts", "fills", "borders", "cellStyleXfs", "cellXfs", "dxfs"):

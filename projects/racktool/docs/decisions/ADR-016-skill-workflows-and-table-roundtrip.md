@@ -24,7 +24,8 @@
   文字类型/合并/重扫身份核验、备份和 SQLite 失败回滚保持原链路。写入以原 OOXML 包为底，仅补丁计划 old/new 矩形中的单元格和合并范围，保留原 workbook.xml、
   未涉及的部件及 styles/workbook 扩展；样式前缀和索引核验后仅追加。命名样式基表原字节及计数保留，允许
   生成器省略其 apply 开关；cellXfs 的开关语义保护不放宽。合法无样式包补齐样式关系；
-  Excel/WPS 空 fill 仅作等价 no-fill 的局部兼容修复，不重排索引。新编辑对不能保真的未知对象拒绝。
+  Excel/WPS 空 fill 仅在已验证命名空间/结构的标准 fills 容器内作等价 no-fill 修复，
+  不触及扩展中的同名元素，不重排索引。新编辑对不能保真的未知对象拒绝。
 - layout inspect/propose/check 从只读快照输出逐 Sheet 候选、异常与纯布局 Profile；生成规则复用
   schema/YAML reload/match/apply dry-run，不复制 Parser、不 force 低置信结果。
   固定坐标描述每 Sheet 一个机柜，不同 Profile 的异构 Sheet 暂用独立 SQLite 项目。

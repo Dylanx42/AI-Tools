@@ -483,3 +483,35 @@ def test_base_style_false_apply_switches_remain_raw_during_cross_room_edit(tmp_p
     with ZipFile(source) as package:
         assert _spans(package.read("xl/styles.xml"), "cellStyleXfs")[0].group() == original_base
     assert rescan_workbook(source, result.project).accepted
+
+
+@pytest.mark.parametrize("extension", [
+    b'<extLst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><ext uri="opaque"><keep:fill xmlns:keep="urn:opaque"/></ext></extLst>',
+    b'<extLst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><ext uri="opaque"><keep:fills xmlns:keep="urn:opaque"><keep:fill/></keep:fills></ext></extLst>',
+])
+def test_empty_fill_repair_keeps_same_named_extension_elements(tmp_path, extension):
+    import re
+
+    from tests.integration.test_safe_sync import _add_empty_fill_record
+
+    source, database, _, _, _, _ = _setup(tmp_path)
+    _add_empty_fill_record(source)
+    with ZipFile(source) as package:
+        parts = [(info, package.read(info)) for info in package.infolist()]
+    with ZipFile(source, "w") as package:
+        for info, raw in parts:
+            if info.filename == "xl/styles.xml":
+                raw = re.sub(rb'(</(?:[\w.-]+:)?styleSheet\s*>)', lambda match: extension + match.group(), raw, count=1)
+                assert extension in raw
+            package.writestr(info, raw)
+    project = import_project(source, database)
+    target = next(rack for rack in project.racks if rack.source_sheet == "二号机房")
+    plan = plan_device_edit(project, project.devices[0].device_id, target.rack_id, 2, 4)
+    assert not plan.conflicts
+    result = commit_write_plan(source, database, plan)
+    assert result.status == "applied", result.errors
+    with ZipFile(source) as package:
+        assert extension in package.read("xl/styles.xml")
+    workbook = load_workbook(source)
+    assert workbook["二号机房"]["B3"].value == project.devices[0].display_text
+    workbook.close()
