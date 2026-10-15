@@ -7,6 +7,7 @@ from racktool.core.editing import (
     edit_draft_device,
 )
 from racktool.core.export import export_project_workbook
+from racktool.core.position_table import apply_position_table, preview_position_table
 from racktool.core.project import import_workbook, rescan_workbook
 from racktool.core.service import (
     commit_write_plan,
@@ -16,9 +17,12 @@ from racktool.core.service import (
     restore_project_backup,
 )
 from racktool.core.sync import (
+    EditRequest,
     MoveRequest,
     apply_writeback,
     plan_device_add,
+    plan_device_edit,
+    plan_device_edits,
     plan_device_move,
     plan_device_moves,
     plan_device_rename,
@@ -27,10 +31,12 @@ from racktool.core.templates import create_empty_rack_project
 from racktool.core.workbook import scan_workbook
 
 __all__ = [
+    "EditRequest",
     "MoveRequest",
     "add_draft_device",
     "add_draft_rack",
     "analyze_workbook",
+    "apply_position_table",
     "apply_writeback",
     "commit_write_plan",
     "create_draft_project",
@@ -42,9 +48,12 @@ __all__ = [
     "import_workbook",
     "load_project_state",
     "plan_device_add",
+    "plan_device_edit",
+    "plan_device_edits",
     "plan_device_move",
     "plan_device_moves",
     "plan_device_rename",
+    "preview_position_table",
     "rescan_project",
     "rescan_workbook",
     "restore_project_backup",

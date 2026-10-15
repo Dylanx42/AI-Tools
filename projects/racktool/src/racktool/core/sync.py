@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 from collections.abc import Sequence
 from copy import copy
@@ -37,8 +39,9 @@ class WriteAction:
     start_u: int
     end_u: int
     display_text: str
-    operation: Literal["move", "add", "rename"] = "move"
+    operation: Literal["move", "add", "rename", "edit"] = "move"
     expected_text: str | None = None
+    source_sheet_name: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -53,12 +56,22 @@ class MoveRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class EditRequest:
+    device_id: str
+    rack_id: str
+    start_u: int
+    end_u: int
+    display_text: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class WritePlan:
     actions: tuple[WriteAction, ...]
     conflicts: tuple[IdentityConflict, ...] = ()
     project_id: str | None = None
     source_path: str | None = None
     source_fingerprint: str | None = None
+    project_revision: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +80,7 @@ class WritePlan:
             "project_id": self.project_id,
             "source_path": self.source_path,
             "source_fingerprint": self.source_fingerprint,
+            "project_revision": self.project_revision,
         }
 
 
@@ -104,6 +118,11 @@ def _conflict(
     )
 
 
+def _project_revision(project: RackProject) -> str:
+    payload = json.dumps(project.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def _plan(
     project: RackProject,
     source: Path | None,
@@ -117,6 +136,7 @@ def _plan(
         project_id=project.project_id,
         source_path=str(source) if source is not None else None,
         source_fingerprint=project.workbook_fingerprint,
+        project_revision=_project_revision(project),
     )
 
 
@@ -284,6 +304,7 @@ def _unsupported_action_metadata_conflicts(
     action_cells = {
         (row, column)
         for min_col, min_row, max_col, max_row in (old_bounds, new_bounds)
+        if min_col >= 1 and min_row >= 1
         for row in range(min_row, max_row + 1)
         for column in range(min_col, max_col + 1)
     }
@@ -412,11 +433,11 @@ def _target_range(
         if source_columns[offset : offset + width] == old_columns
     ]
     if len(offsets) != 1:
-        raise ValueError("The current device width/lane cannot be mapped unambiguously")
+        raise ValueError("源设备的单元格列宽/设备列分区无法唯一映射，已拒绝写入")
     offset = offsets[0]
     columns = target_columns[offset : offset + width]
     if len(columns) != width or columns != list(range(columns[0], columns[0] + width)):
-        raise ValueError("The target rack cannot preserve the device column width/lane")
+        raise ValueError("目标机柜无法保持原设备的单元格列数及设备列分区，已拒绝写入")
     rows = [target_rack.u_to_row[unit] for unit in _u_range(start_u, end_u)]
     if sorted(rows) != list(range(min(rows), max(rows) + 1)):
         raise ValueError("The target U rows are not contiguous")
@@ -474,93 +495,123 @@ def _workbook_layout_conflicts(
     conflicts = _unsupported_threaded_comment_conflicts(source, action)
     if conflicts:
         return conflicts
+    source_sheet = action.source_sheet_name or action.sheet_name
     workbook = load_workbook(source, read_only=False, data_only=False)
     try:
-        if action.sheet_name not in workbook.sheetnames:
-            return [
-                _conflict(
-                    "source-sheet-missing",
-                    "The device source Sheet no longer exists",
-                    entity_ids=[action.device_id],
-                )
-            ]
-        sheet = workbook[action.sheet_name]
+        if any(name not in workbook.sheetnames for name in (source_sheet, action.sheet_name)):
+            return [_conflict("source-sheet-missing", "The source or target Sheet no longer exists",
+                              entity_ids=[action.device_id])]
         old_bounds = _bounds(action.old_range)
         new_bounds = _bounds(action.new_range)
-        conflicts.extend(
-            _unsupported_action_metadata_conflicts(
-                workbook,
-                sheet,
-                action,
-                old_bounds,
-                new_bounds,
-            )
-        )
-        normalized_old = action.old_range.replace("$", "")
-        for merged in sheet.merged_cells.ranges:
-            merged_range = str(merged).replace("$", "")
-            merged_bounds = (merged.min_col, merged.min_row, merged.max_col, merged.max_row)
-            if _ranges_overlap(old_bounds, merged_bounds) and merged_range != normalized_old:
-                conflicts.append(
-                    _conflict(
-                        "source-merge-conflict",
-                        "The current device range intersects an unrelated merged range",
-                        entity_ids=[action.device_id],
-                        evidence=[merged_range],
-                    )
-                )
-            if _ranges_overlap(new_bounds, merged_bounds) and (
-                action.operation == "add" or merged_range != normalized_old
-            ):
-                conflicts.append(
-                    _conflict(
-                        "target-merge-conflict",
+        empty_bounds = (0, 0, 0, 0)
+        for name in dict.fromkeys((source_sheet, action.sheet_name)):
+            sheet = workbook[name]
+            local_old = old_bounds if name == source_sheet else empty_bounds
+            local_new = new_bounds if name == action.sheet_name else empty_bounds
+            local_action = replace(action, sheet_name=name)
+            conflicts.extend(_unsupported_action_metadata_conflicts(
+                workbook, sheet, local_action, local_old, local_new,
+            ))
+            normalized_old = action.old_range.replace("$", "")
+            for merged in sheet.merged_cells.ranges:
+                merged_range = str(merged).replace("$", "")
+                merged_bounds = (merged.min_col, merged.min_row, merged.max_col, merged.max_row)
+                own_merge = name == source_sheet and merged_range == normalized_old
+                if _ranges_overlap(local_old, merged_bounds) and not own_merge:
+                    conflicts.append(_conflict("source-merge-conflict",
+                        "The current device intersects an unrelated merged range",
+                        entity_ids=[action.device_id], evidence=[name, merged_range]))
+                if _ranges_overlap(local_new, merged_bounds) and (action.operation == "add" or not own_merge):
+                    conflicts.append(_conflict("target-merge-conflict",
                         "The target range intersects an existing merged range",
-                        entity_ids=[action.device_id, action.rack_id],
-                        evidence=[merged_range],
-                    )
-                )
-        old_min_col, old_min_row, old_max_col, old_max_row = old_bounds
-        new_min_col, new_min_row, new_max_col, new_max_row = new_bounds
-        old_cells = {
-            (row, column)
-            for row in range(old_min_row, old_max_row + 1)
-            for column in range(old_min_col, old_max_col + 1)
-        } if action.operation != "add" else set()
-        for row in range(new_min_row, new_max_row + 1):
-            for column in range(new_min_col, new_max_col + 1):
-                if (row, column) in old_cells:
-                    continue
-                value = sheet.cell(row, column).value
-                if value not in (None, ""):
-                    conflicts.append(
-                        _conflict(
-                            "target-cell-not-empty",
-                            "The target range contains workbook data unknown to the project",
+                        entity_ids=[action.device_id, action.rack_id], evidence=[name, merged_range]))
+            if name != action.sheet_name:
+                continue
+            new_min_col, new_min_row, new_max_col, new_max_row = new_bounds
+            for row in range(new_min_row, new_max_row + 1):
+                for column in range(new_min_col, new_max_col + 1):
+                    if action.operation != "add" and name == source_sheet and _cell_in_bounds(row, column, old_bounds):
+                        continue
+                    if sheet.cell(row, column).value not in (None, ""):
+                        conflicts.append(_conflict("target-cell-not-empty",
+                            "The target contains workbook data unknown to the project",
                             entity_ids=[action.device_id, action.rack_id],
-                            evidence=[sheet.cell(row, column).coordinate],
-                        )
-                    )
-        anchor_value = sheet.cell(old_min_row, old_min_col).value
-        expected_text = action.expected_text if action.operation == "rename" else action.display_text
+                            evidence=[name, sheet.cell(row, column).coordinate]))
+        old_min_col, old_min_row, _, _ = old_bounds
+        anchor_value = workbook[source_sheet].cell(old_min_row, old_min_col).value
+        expected_text = action.expected_text if action.expected_text is not None else action.display_text
         if action.operation != "add" and str(anchor_value) != expected_text:
-            conflicts.append(
-                _conflict(
-                    "source-device-text-mismatch",
-                    "The source cell no longer contains the expected device text",
-                    entity_ids=[action.device_id],
-                    evidence=[
-                        f"expected={expected_text!r}",
-                        f"actual={anchor_value!r}",
-                    ],
-                )
-            )
+            conflicts.append(_conflict("source-device-text-mismatch",
+                "The source cell no longer contains the expected device text",
+                entity_ids=[action.device_id], evidence=[f"expected={expected_text!r}", f"actual={anchor_value!r}"]))
+    finally:
+        workbook.close()
+    if action.operation == "edit" or source_sheet != action.sheet_name:
+        conflicts.extend(_extended_edit_metadata_conflicts(source, action))
+    return conflicts
+
+
+def _extended_edit_metadata_conflicts(source: Path, action: WriteAction) -> list[IdentityConflict]:
+    """Reject unsupported objects rather than let openpyxl silently discard them."""
+    from xml.etree import ElementTree
+
+    with ZipFile(source) as package:
+        unsupported = []
+        for name in package.namelist():
+            canonical = name.replace("\\", "/").lower()
+            if canonical.startswith(("xl/drawings/", "xl/charts/", "xl/activex/", "xl/embeddings/", "customxml/", "xl/slicers/", "xl/pivot", "xl/ctrlprops/")) or canonical.endswith(("vbaproject.bin", "metadata.xml")):
+                unsupported.append(name)
+            if canonical.startswith("xl/") and canonical.endswith(".xml"):
+                root = ElementTree.fromstring(package.read(name))
+                if any(node.tag.rsplit("}", 1)[-1] in {"AlternateContent", "r"}
+                       or (node.tag.rsplit("}", 1)[-1] == "extLst"
+                           and canonical not in {"xl/styles.xml", "xl/workbook.xml"})
+                       for node in root.iter()):
+                    unsupported.append(name + ":unsupported-extension-or-rich-text")
+        if unsupported:
+            return [_conflict("unsupported-workbook-object",
+                "Resizing/cross-Sheet edits cannot safely preserve these workbook objects",
+                entity_ids=[action.device_id], evidence=sorted(unsupported))]
+    workbook = load_workbook(source, read_only=False, data_only=False)
+    conflicts: list[IdentityConflict] = []
+    try:
+        for name, bounds in _action_ranges(action):
+            sheet = workbook[name]
+            for table in sheet.tables.values():
+                if _ranges_overlap(bounds, _bounds(table.ref)):
+                    conflicts.append(_conflict("unsupported-excel-table", "Edit intersects an Excel Table",
+                                               evidence=[name, table.ref]))
+            for formatting in sheet.conditional_formatting:
+                if any(_ranges_overlap(bounds, _bounds(str(ref))) for ref in formatting.sqref.ranges):
+                    conflicts.append(_conflict("unsupported-conditional-formatting",
+                        "Edit intersects conditional formatting", evidence=[name, str(formatting.sqref)]))
     finally:
         workbook.close()
     return conflicts
 
 
-def plan_device_move(
+def _action_ranges(action: WriteAction) -> tuple[tuple[str, tuple[int, int, int, int]], ...]:
+    target = (action.sheet_name, _bounds(action.new_range))
+    if action.operation == "add":
+        return (target,)
+    return ((action.source_sheet_name or action.sheet_name, _bounds(action.old_range)), target)
+
+
+def _plan_overlap_conflicts(actions: Sequence[WriteAction]) -> list[IdentityConflict]:
+    conflicts = []
+    for index, left in enumerate(actions):
+        for right in actions[index + 1:]:
+            if left.rack_id == right.rack_id and set(_u_range(left.start_u, left.end_u)).intersection(_u_range(right.start_u, right.end_u)):
+                conflicts.append(_conflict("plan-target-overlap", "Two actions target overlapping U units",
+                    entity_ids=[left.device_id, right.device_id, left.rack_id]))
+            if any(left_sheet == right_sheet and _ranges_overlap(left_bounds, right_bounds)
+                   for left_sheet, left_bounds in _action_ranges(left)
+                   for right_sheet, right_bounds in _action_ranges(right)):
+                conflicts.append(_conflict("plan-cell-range-overlap", "Two actions touch overlapping workbook cells",
+                    entity_ids=[left.device_id, right.device_id]))
+    return conflicts
+
+def _plan_device_change(
     project: RackProject,
     device_id: str,
     rack_id: str,
@@ -568,6 +619,8 @@ def plan_device_move(
     end_u: int,
     *,
     workbook_path: Path | None = None,
+    allow_resize: bool = False,
+    display_text: str | None = None,
 ) -> WritePlan:
     source = (
         normalize_path(workbook_path)
@@ -643,7 +696,7 @@ def plan_device_move(
                 entity_ids=[device_id, placement.rack_id, mapping.rack_id or ""],
             )
         )
-    if abs(end_u - start_u) + 1 != placement.height_u:
+    if not allow_resize and abs(end_u - start_u) + 1 != placement.height_u:
         conflicts.append(
             _conflict(
                 "device-height-change",
@@ -685,14 +738,8 @@ def plan_device_move(
                 entity_ids=[device_id, rack_id],
             )
         )
-    if mapping.sheet_name != rack.source_sheet:
-        conflicts.append(
-            _conflict(
-                "cross-sheet-move-unsupported",
-                "V0.4 only writes moves inside the current source Sheet",
-                entity_ids=[device_id, rack_id],
-            )
-        )
+    if display_text is not None:
+        conflicts.extend(_write_text_conflicts(project, display_text))
     if conflicts:
         return _plan(project, source, conflicts=conflicts)
 
@@ -719,18 +766,22 @@ def plan_device_move(
         and min(placement.start_u, placement.end_u) == min(start_u, end_u)
         and max(placement.start_u, placement.end_u) == max(start_u, end_u)
         and mapping.source_range == new_range
+        and (display_text is None or display_text == device.display_text)
     ):
         return _plan(project, source)
 
     action = WriteAction(
         device_id=device_id,
         rack_id=rack_id,
-        sheet_name=mapping.sheet_name,
+        sheet_name=rack.source_sheet or mapping.sheet_name,
+        source_sheet_name=mapping.sheet_name if mapping.sheet_name != rack.source_sheet else None,
         old_range=mapping.source_range,
         new_range=new_range,
         start_u=min(start_u, end_u),
         end_u=max(start_u, end_u),
-        display_text=device.display_text,
+        display_text=device.display_text if display_text is None else display_text,
+        operation="edit" if allow_resize else "move",
+        expected_text=device.display_text if display_text is not None else None,
     )
     try:
         conflicts.extend(_workbook_layout_conflicts(source, action))
@@ -745,6 +796,54 @@ def plan_device_move(
     if conflicts:
         return _plan(project, source, conflicts=conflicts)
     return _plan(project, source, actions=(action,))
+
+
+def plan_device_move(
+    project: RackProject, device_id: str, rack_id: str, start_u: int, end_u: int, *,
+    workbook_path: Path | None = None,
+) -> WritePlan:
+    """Move a device, preserving U height and cell width/lane across Sheets."""
+    return _plan_device_change(project, device_id, rack_id, start_u, end_u,
+                               workbook_path=workbook_path)
+
+
+def plan_device_edit(
+    project: RackProject, device_id: str, rack_id: str, start_u: int, end_u: int, *,
+    display_text: str | None = None, workbook_path: Path | None = None,
+) -> WritePlan:
+    """Explicitly change height/location/text, keeping stable device identity."""
+    return _plan_device_change(project, device_id, rack_id, start_u, end_u,
+                               workbook_path=workbook_path, allow_resize=True,
+                               display_text=display_text)
+
+
+def plan_device_edits(
+    project: RackProject, requests: Sequence[EditRequest], *, workbook_path: Path | None = None,
+) -> WritePlan:
+    """Plan independent changes atomically; swaps/source dependencies are refused."""
+    source = normalize_path(workbook_path) if workbook_path is not None else (
+        normalize_path(Path(project.source_workbook)) if project.source_workbook else None)
+    conflicts = list(project_error_conflicts(project))
+    if source is None:
+        conflicts.append(_conflict("unbound-project-source", "The project has no bound workbook"))
+    else:
+        conflicts.extend(_source_conflicts(project, source))
+    actions: list[WriteAction] = []
+    seen: set[str] = set()
+    for request in requests:
+        if request.device_id in seen:
+            conflicts.append(_conflict("duplicate-plan-device", "A device can only appear once",
+                                       entity_ids=[request.device_id]))
+            continue
+        seen.add(request.device_id)
+        planned = plan_device_edit(project, request.device_id, request.rack_id,
+                                   request.start_u, request.end_u,
+                                   display_text=request.display_text, workbook_path=source)
+        conflicts.extend(planned.conflicts)
+        actions.extend(planned.actions)
+    conflicts.extend(_plan_overlap_conflicts(actions))
+    return _plan(project, source, actions=tuple(actions) if not conflicts else (),
+                 conflicts=_deduplicate_conflicts(conflicts))
 
 
 def _write_text_conflicts(project: RackProject, text: str) -> list[IdentityConflict]:
@@ -917,35 +1016,7 @@ def plan_device_moves(
         conflicts.extend(planned.conflicts)
         actions.extend(planned.actions)
 
-    for index, left in enumerate(actions):
-        for right in actions[index + 1 :]:
-            if left.rack_id == right.rack_id and set(
-                _u_range(left.start_u, left.end_u)
-            ).intersection(_u_range(right.start_u, right.end_u)):
-                conflicts.append(
-                    _conflict(
-                        "plan-target-overlap",
-                        "Two write actions target overlapping rack units",
-                        entity_ids=[left.device_id, right.device_id, left.rack_id],
-                    )
-                )
-            if left.sheet_name != right.sheet_name:
-                continue
-            left_ranges = (_bounds(left.old_range), _bounds(left.new_range))
-            right_ranges = (_bounds(right.old_range), _bounds(right.new_range))
-            if any(
-                _ranges_overlap(left_range, right_range)
-                for left_range in left_ranges
-                for right_range in right_ranges
-            ):
-                conflicts.append(
-                    _conflict(
-                        "plan-cell-range-overlap",
-                        "Two write actions touch overlapping workbook cells",
-                        entity_ids=[left.device_id, right.device_id],
-                        evidence=[left.sheet_name],
-                    )
-                )
+    conflicts.extend(_plan_overlap_conflicts(actions))
 
     return _plan(
         project,
@@ -993,6 +1064,7 @@ def _restore_cell(cell: Any, snapshot: _CellSnapshot) -> None:
 
 def _apply_action(workbook: OpenpyxlWorkbook, action: WriteAction) -> None:
     sheet = workbook[action.sheet_name]
+    source_sheet = workbook[action.source_sheet_name or action.sheet_name]
     old_min_col, old_min_row, old_max_col, old_max_row = _bounds(action.old_range)
     new_min_col, new_min_row, new_max_col, new_max_row = _bounds(action.new_range)
     if action.operation == "rename":
@@ -1003,25 +1075,25 @@ def _apply_action(workbook: OpenpyxlWorkbook, action: WriteAction) -> None:
     old_height = old_max_row - old_min_row + 1
     old_width = old_max_col - old_min_col + 1
     if (
-        new_max_row - new_min_row + 1 != old_height
+        (action.operation != "edit" and new_max_row - new_min_row + 1 != old_height)
         or new_max_col - new_min_col + 1 != old_width
     ):
         raise ValueError("Write action changed the device cell rectangle")
 
     snapshots = [
         [
-            _snapshot_cell(sheet.cell(old_min_row + row, old_min_col + column))
+            _snapshot_cell(source_sheet.cell(old_min_row + row, old_min_col + column))
             for column in range(old_width)
         ]
         for row in range(old_height)
     ]
-    value = snapshots[0][0].value
+    value = action.display_text if action.expected_text is not None else snapshots[0][0].value
     if value in (None, ""):
         value = action.display_text
     normalized_old = action.old_range.replace("$", "")
-    for merged in list(sheet.merged_cells.ranges):
+    for merged in list(source_sheet.merged_cells.ranges):
         if str(merged).replace("$", "") == normalized_old:
-            sheet.unmerge_cells(str(merged))
+            source_sheet.unmerge_cells(str(merged))
 
     new_cells = {
         (row, column)
@@ -1030,18 +1102,23 @@ def _apply_action(workbook: OpenpyxlWorkbook, action: WriteAction) -> None:
     }
     for row in range(old_min_row, old_max_row + 1):
         for column in range(old_min_col, old_max_col + 1):
-            if (row, column) not in new_cells:
-                sheet.cell(row, column).value = None
+            if source_sheet is not sheet or (row, column) not in new_cells:
+                released = source_sheet.cell(row, column)
+                _restore_cell(released, snapshots[row - old_min_row][column - old_min_col])
+                released.value = None
 
-    for row in range(old_height):
+    new_height = new_max_row - new_min_row + 1
+    for row in range(new_height):
+        # Preserve top/bottom styles; repeat an interior row for additional U rows.
+        old_row = 0 if row == 0 else (old_height - 1 if row == new_height - 1 else min(row, max(0, old_height - 2)))
         for column in range(old_width):
             target = sheet.cell(new_min_row + row, new_min_col + column)
-            _restore_cell(target, snapshots[row][column])
+            _restore_cell(target, snapshots[old_row][column])
             target.value = None
     anchor = sheet.cell(new_min_row, new_min_col)
     anchor.value = value
     if isinstance(value, str):
-        anchor.data_type = snapshots[0][0].data_type if action.operation == "move" else "s"
+        anchor.data_type = snapshots[0][0].data_type if action.operation in ("move", "edit") and action.expected_text is None else "s"
     if new_min_row != new_max_row or new_min_col != new_max_col:
         sheet.merge_cells(
             start_row=new_min_row,
@@ -1049,6 +1126,53 @@ def _apply_action(workbook: OpenpyxlWorkbook, action: WriteAction) -> None:
             end_row=new_max_row,
             end_column=new_max_col,
         )
+
+
+def _validate_action_cells(path: Path, source: Path, actions: Sequence[WriteAction]) -> None:
+    """Validate deterministic merged geometry, text types and common anchor styles."""
+    original = load_workbook(source, read_only=False, data_only=False)
+    output = load_workbook(path, read_only=False, data_only=False)
+    try:
+        for action in actions:
+            if action.operation != "edit" and action.source_sheet_name is None:
+                continue
+            source_name = action.source_sheet_name or action.sheet_name
+            old_min_col, old_min_row, _, _ = _bounds(action.old_range)
+            new_min_col, new_min_row, new_max_col, new_max_row = _bounds(action.new_range)
+            old = original[source_name].cell(old_min_row, old_min_col)
+            new = output[action.sheet_name].cell(new_min_row, new_min_col)
+            expected_type = old.data_type if action.expected_text is None else "s"
+            if new.value != action.display_text or new.data_type != expected_type:
+                raise ValueError("Written device text or Excel value type changed")
+            for attribute in ("font", "fill", "alignment", "border", "number_format", "protection"):
+                before, after = copy(getattr(old, attribute)), copy(getattr(new, attribute))
+                if attribute == "border":
+                    # Merged-cell reload can materialize a semantically empty Side.
+                    for border in (before, after):
+                        for edge in ("start", "end", "left", "right", "top", "bottom", "diagonal", "vertical", "horizontal"):
+                            side = getattr(border, edge)
+                            if side is not None and side.style is None and side.color is None:
+                                setattr(border, edge, None)
+                if before != after:
+                    raise ValueError(f"Written device anchor style changed: {attribute}")
+            is_merged = new_min_col != new_max_col or new_min_row != new_max_row
+            target_merges = {str(merged) for merged in output[action.sheet_name].merged_cells.ranges}
+            if is_merged and action.new_range not in target_merges:
+                raise ValueError("Written device merge geometry changed")
+            for row in range(new_min_row, new_max_row + 1):
+                for column in range(new_min_col, new_max_col + 1):
+                    if (row, column) != (new_min_row, new_min_col) and output[action.sheet_name].cell(row, column).value is not None:
+                        raise ValueError("The device merge contains unexpected values")
+            old_min_col, old_min_row, old_max_col, old_max_row = _bounds(action.old_range)
+            for row in range(old_min_row, old_max_row + 1):
+                for column in range(old_min_col, old_max_col + 1):
+                    if source_name == action.sheet_name and _cell_in_bounds(row, column, _bounds(action.new_range)):
+                        continue
+                    if output[source_name].cell(row, column).value is not None:
+                        raise ValueError("The old device position was not cleared")
+    finally:
+        original.close()
+        output.close()
 
 
 def _project_after_plan(project: RackProject, plan: WritePlan) -> RackProject:
@@ -1068,7 +1192,7 @@ def _project_after_plan(project: RackProject, plan: WritePlan) -> RackProject:
                 device_id=action.device_id, rack_id=action.rack_id,
                 sheet_name=action.sheet_name, source_range=action.new_range,
             ))
-        elif action.operation == "rename":
+        elif action.operation in ("rename", "edit"):
             devices = [replace(device, display_text=action.display_text)
                        if device.device_id == action.device_id else device for device in devices]
         placements = [
@@ -1141,7 +1265,7 @@ def _validate_written_workbook(
             raise ValueError(f"Device {action.device_id} did not stay on the target rack")
         if placement.start_u != action.start_u or placement.end_u != action.end_u:
             raise ValueError(f"Device {action.device_id} did not land on the target U range")
-        if mapping.source_range != action.new_range:
+        if mapping.source_range != action.new_range or mapping.sheet_name != action.sheet_name:
             raise ValueError(f"Device {action.device_id} mapping was not updated")
         if _device(rescanned, action.device_id).display_text != action.display_text:
             raise ValueError(f"Device {action.device_id} display text was not preserved")
@@ -1154,6 +1278,8 @@ def _refresh_plan(
     plan: WritePlan,
 ) -> WritePlan:
     conflicts: list[IdentityConflict] = []
+    if plan.project_revision != _project_revision(project):
+        conflicts.append(_conflict("stale-write-plan", "The project state changed after this plan was prepared"))
     if plan.project_id != project.project_id:
         conflicts.append(_conflict("stale-write-plan", "The plan belongs to another project"))
     if plan.source_path != str(source):
@@ -1182,6 +1308,11 @@ def _refresh_plan(
             refreshed = plan_device_move(
                 project, action.device_id, action.rack_id, action.start_u, action.end_u, workbook_path=source,
             )
+        elif action.operation == "edit":
+            refreshed = plan_device_edit(
+                project, action.device_id, action.rack_id, action.start_u, action.end_u,
+                display_text=action.display_text if action.expected_text is not None else None, workbook_path=source,
+            )
         elif action.operation == "add":
             refreshed = plan_device_add(
                 project, action.rack_id, action.start_u, action.end_u, action.display_text,
@@ -1206,28 +1337,7 @@ def _refresh_plan(
             refreshed_actions.append(refreshed.actions[0])
     if conflicts:
         return _plan(project, source, conflicts=conflicts)
-    for index, left in enumerate(plan.actions):
-        for right in plan.actions[index + 1 :]:
-            if left.sheet_name == right.sheet_name and any(
-                _ranges_overlap(_bounds(left_range), _bounds(right_range))
-                for left_range in (left.old_range, left.new_range)
-                for right_range in (right.old_range, right.new_range)
-            ):
-                conflicts.append(_conflict("plan-cell-range-overlap", "Write actions touch overlapping workbook cells"))
-            if left.rack_id == right.rack_id and set(
-                _u_range(left.start_u, left.end_u)
-            ).intersection(_u_range(right.start_u, right.end_u)):
-                conflicts.append(
-                    _conflict(
-                        "plan-target-overlap",
-                        "Two write actions target overlapping rack units",
-                        entity_ids=[
-                            left.device_id,
-                            right.device_id,
-                            left.rack_id,
-                        ],
-                    )
-                )
+    conflicts.extend(_plan_overlap_conflicts(plan.actions))
     return _plan(
         project,
         source,
@@ -1317,8 +1427,12 @@ def apply_writeback(
         finally:
             workbook.close()
 
+        from racktool.core.sync_ooxml import preserve_writeback_package
+
+        preserve_writeback_package(backup_path, temp_path, plan.actions)
         reloaded = load_workbook(temp_path, read_only=False, data_only=False)
         reloaded.close()
+        _validate_action_cells(temp_path, source, plan.actions)
         updated_project = _validate_written_workbook(
             temp_path,
             source,

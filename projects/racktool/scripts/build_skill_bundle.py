@@ -41,6 +41,11 @@ def build(output: Path, version: str) -> Path:
                 target = root / path.relative_to(source)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(path.read_bytes())
+        # Ship the public, stdlib-only workflow check with the finished Skill.
+        # It creates synthetic inputs outside the install directory, never private samples.
+        workflow_check = root / "scripts" / "verify_skill_workflows.py"
+        workflow_check.parent.mkdir(parents=True, exist_ok=True)
+        workflow_check.write_bytes((PROJECT / "scripts" / "verify_skill_workflows.py").read_bytes())
         for path in (PROJECT / "src" / "racktool").rglob("*"):
             relative = path.relative_to(PROJECT / "src" / "racktool")
             if (path.is_file() and path.suffix in {".py", ".yaml"}
