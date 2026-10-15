@@ -10,6 +10,13 @@
 后续优先自然语言唯一对象定位、布局适配、现有写回限制和 Excel/WPS 输出验收；
 历史 GUI 待办不是当前阻塞，下面旧阶段结果保留为带日期历史记录。
 
+## 2026-10-15 并行增量
+
+对话协议/名称查询/空闲 U、陌生布局候选与坐标规则、绑定改高/跨 Sheet 移动、位置表回导
+已作为同一 Skill 工作流增量实现。设计、保护与限制见 ADR-016，实际证据见本轮更新记录。
+系统与 CLI 集成测试不替代 Agent 软件调用；真实 Codex CLI 在云端启动受只读 installation_id
+阻塞，本机 Codex/WorkBuddy/TRAE 和 Excel/WPS 仍需验收。异构多 Profile 暂独立项目。
+
 ## 当前门禁状态（2026-09-14）
 
 - Phase 0：PASS，详见 `docs/gates/PHASE0.md`。

@@ -116,12 +116,54 @@ def append_position_sheet(source: bytes, generated: Path, position_name: str) ->
             "name": position_name, "sheetId": str(next_sheet_id), f"{{{REL}}}id": identifier,
         })
         originals["xl/workbook.xml"] = _append(originals["xl/workbook.xml"], "sheets", _xml(new_sheet))
+        # Only copy the new position page's hidden, local round-trip constants.
+        # Original global/local names and worksheet parts remain untouched.
+        generated_names = generated_workbook.find(f"{{{MAIN}}}definedNames")
+        new_names = []
+        if generated_names is not None:
+            generated_index = list(generated_sheets).index(generated_sheet)
+            for definition in generated_names:
+                if (definition.attrib.get("localSheetId") == str(generated_index)
+                        and definition.attrib.get("name", "").startswith("_RackToolPositions_v1_")):
+                    definition.set("localSheetId", str(len(sheets)))
+                    new_names.append(_xml(definition))
+        if new_names:
+            names_xml = b"".join(new_names)
+            if workbook_root.find(f"{{{MAIN}}}definedNames") is not None:
+                raw = originals["xl/workbook.xml"]
+                empty_names = re.search(rb"<([\w.-]+:)?definedNames\b[^>]*?\s*/>", raw)
+                if empty_names is not None:
+                    prefix = empty_names.group(1) or b""
+                    replacement = (empty_names.group()[:-2] + b">" + names_xml
+                                   + b"</" + prefix + b"definedNames>")
+                    originals["xl/workbook.xml"] = (
+                        raw[:empty_names.start()] + replacement + raw[empty_names.end():]
+                    )
+                else:
+                    originals["xl/workbook.xml"] = _append(raw, "definedNames", names_xml)
+            else:
+                # Keep schema order: functionGroups/externalReferences may follow sheets.
+                container = (f'<definedNames xmlns="{MAIN}">'.encode()
+                             + names_xml + b"</definedNames>")
+                raw = originals["xl/workbook.xml"]
+                sheets_closing = re.search(rb"</(?:[\w.-]+:)?sheets\s*>", raw)
+                assert sheets_closing is not None
+                following = re.search(
+                    rb"<(?:[\w.-]+:)?(?:calcPr|oleSize|customWorkbookViews|pivotCaches|"
+                    rb"smartTagPr|smartTagTypes|webPublishing|fileRecoveryPr|webPublishObjects|extLst)\b",
+                    raw[sheets_closing.end():],
+                )
+                if following is None:
+                    originals["xl/workbook.xml"] = _append(raw, "workbook", container)
+                else:
+                    insertion = sheets_closing.end() + following.start()
+                    originals["xl/workbook.xml"] = (
+                        raw[:insertion] + container + raw[insertion:]
+                    )
         new_relation = ET.Element(f"{{{PACKAGE_REL}}}Relationship", {
             "Id": identifier, "Type": f"{REL}/worksheet", "Target": "/" + new_part,
         })
-        originals["xl/_rels/workbook.xml.rels"] = _append(
-            originals["xl/_rels/workbook.xml.rels"], "Relationships", _xml(new_relation),
-        )
+        relations_xml = _xml(new_relation)
         overrides = [ET.Element(f"{{{CONTENT}}}Override", {
             "PartName": "/" + new_part,
             "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml",
@@ -131,8 +173,34 @@ def append_position_sheet(source: bytes, generated: Path, position_name: str) ->
                 "PartName": "/" + new_table,
                 "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml",
             }))
+        generated_styles = compiled.read("xl/styles.xml")
+        if "xl/styles.xml" in originals:
+            originals["xl/styles.xml"] = _merge_styles(originals["xl/styles.xml"], generated_styles)
+        else:
+            # A stylesheet is optional in a valid XLSX. The compiled workbook's
+            # index zero is openpyxl's default style, matching original unstyled
+            # cells; new position cells retain their generated style indexes.
+            style_relations = [item for item in relationships
+                               if item.attrib.get("Type") == f"{REL}/styles"]
+            if style_relations:
+                raise ValueError("原版面导出失败：原样式关系引用缺失或不支持的样式部件。")
+            extras["xl/styles.xml"] = generated_styles
+            style_id = "rIdRackToolStyles"
+            while style_id in occupied_ids or style_id == identifier:
+                style_id += "_"
+            relations_xml += _xml(ET.Element(f"{{{PACKAGE_REL}}}Relationship", {
+                "Id": style_id, "Type": f"{REL}/styles", "Target": "/xl/styles.xml",
+            }))
+            content_root = ET.fromstring(originals["[Content_Types].xml"])
+            if not any(item.attrib.get("PartName") == "/xl/styles.xml" for item in content_root):
+                overrides.append(ET.Element(f"{{{CONTENT}}}Override", {
+                    "PartName": "/xl/styles.xml",
+                    "ContentType": "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml",
+                }))
+        originals["xl/_rels/workbook.xml.rels"] = _append(
+            originals["xl/_rels/workbook.xml.rels"], "Relationships", relations_xml,
+        )
         originals["[Content_Types].xml"] = _append(originals["[Content_Types].xml"], "Types", b"".join(map(_xml, overrides)))
-        originals["xl/styles.xml"] = _merge_styles(originals["xl/styles.xml"], compiled.read("xl/styles.xml"))
         result = BytesIO()
         with ZipFile(result, "w", ZIP_DEFLATED) as archive:
             archive.comment = original.comment

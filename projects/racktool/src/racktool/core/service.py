@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import os
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
-from racktool.core.backup import create_backup, discard_backup, restore_backup
+from racktool.core.backup import create_backup, create_temp_copy, discard_backup, restore_backup
 from racktool.core.identity import normalize_path, sha256_file, unique_suffix
 from racktool.core.project import (
     _rescan_snapshot,
@@ -136,10 +137,29 @@ def import_project(
     database: Path,
     *,
     profile: LayoutProfile | None = None,
+    expected_sha256: str | None = None,
 ) -> RackProject:
     source = normalize_path(workbook)
     database_path = normalize_path(database)
-    project = import_workbook(source, profile=profile)
+    if source == database_path:
+        raise ValueError("The project database must not overwrite the source workbook")
+    if expected_sha256 is not None:
+        if len(expected_sha256) != 64 or any(character not in "0123456789abcdef" for character in expected_sha256):
+            raise ValueError("expected_sha256 must be a lowercase SHA256 digest")
+        if sha256_file(source) != expected_sha256:
+            raise ValueError("Source SHA256 no longer matches the reviewed layout; analyze again")
+        snapshot = create_temp_copy(source)
+        try:
+            if sha256_file(snapshot) != expected_sha256:
+                raise ValueError("The source changed while capturing the import snapshot")
+            project = import_workbook(snapshot, profile=profile)
+            if project.workbook_fingerprint != expected_sha256 or sha256_file(source) != expected_sha256:
+                raise ValueError("The source changed while validating the import snapshot")
+            project = replace(project, source_workbook=str(source))
+        finally:
+            snapshot.unlink(missing_ok=True)
+    else:
+        project = import_workbook(source, profile=profile)
     errors = project_error_conflicts(project)
     if errors:
         raise ValueError("; ".join(item.message for item in errors))
@@ -147,13 +167,20 @@ def import_project(
         create_backup(database_path, kind="transaction") if database_path.is_file() else None
     )
     try:
+        if expected_sha256 is not None and sha256_file(source) != expected_sha256:
+            raise ValueError("The source changed before project persistence")
         save_project(database_path, project)
+        persisted = load_project(database_path)
+        if expected_sha256 is not None and sha256_file(source) != expected_sha256:
+            raise ValueError("The source changed during project persistence")
     except Exception:
         _restore_database(database_backup, database_path)
+        if expected_sha256 is not None and database_backup is None:
+            database_path.unlink(missing_ok=True)
         _discard(database_backup)
         raise
     _discard(database_backup)
-    return load_project(database_path)
+    return persisted
 
 
 def rescan_project(workbook: Path, database: Path) -> RescanResult:

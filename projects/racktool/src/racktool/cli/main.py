@@ -6,6 +6,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from racktool.cli.conversation_cli import handle_conversation_cli, register_conversation_cli
+from racktool.cli.layout_cli import handle_layout_cli, register_layout_cli
+from racktool.cli.position_cli import handle_position_cli, register_position_cli
 from racktool.core import (
     add_draft_device,
     add_draft_rack,
@@ -22,13 +25,21 @@ from racktool.core.service import (
     load_project_state,
     rescan_project,
 )
-from racktool.core.sync import plan_device_add, plan_device_move, plan_device_rename
+from racktool.core.sync import (
+    plan_device_add,
+    plan_device_edit,
+    plan_device_move,
+    plan_device_rename,
+)
 from racktool.profiles import apply_profile, fingerprint_workbook, load_profile, select_profile
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="racktool", description="RackTool XLSX utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    register_conversation_cli(subparsers)
+    register_layout_cli(subparsers)
+    register_position_cli(subparsers)
     inspect_parser = subparsers.add_parser(
         "inspect", help="emit a deterministic structural summary (not rack detection)"
     )
@@ -110,6 +121,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_parser.add_argument("workbook", type=Path)
     import_parser.add_argument("database", type=Path)
+    import_parser.add_argument("--expected-sha256", help="source hash from the checked layout")
     import_parser.add_argument(
         "--profile",
         type=Path,
@@ -120,6 +132,15 @@ def build_parser() -> argparse.ArgumentParser:
     rescan_parser.add_argument("database", type=Path)
     sync_parser = subparsers.add_parser("sync", help="plan or apply a safe workbook write-back")
     sync_subparsers = sync_parser.add_subparsers(dest="sync_command", required=True)
+    bound_edit = sync_subparsers.add_parser("edit", help="safely resize, move, or rename a bound device")
+    bound_edit.add_argument("workbook", type=Path)
+    bound_edit.add_argument("database", type=Path)
+    bound_edit.add_argument("device_id")
+    bound_edit.add_argument("rack_id")
+    bound_edit.add_argument("start_u", type=int)
+    bound_edit.add_argument("end_u", type=int)
+    bound_edit.add_argument("--text", help="optional literal replacement text")
+    bound_edit.add_argument("--commit", action="store_true")
     add_sync = sync_subparsers.add_parser("add-device", help="plan or safely add a device to a bound XLSX")
     add_sync.add_argument("workbook", type=Path)
     add_sync.add_argument("database", type=Path)
@@ -169,6 +190,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "conversation":
+            return handle_conversation_cli(args)
+        if args.command == "layout":
+            return handle_layout_cli(args)
+        if args.command == "position-table":
+            return handle_position_cli(args)
         if args.command == "inspect":
             scan_result = scan_workbook(args.workbook)
             print(json.dumps(scan_result.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
@@ -279,6 +306,7 @@ def _project_command(args: argparse.Namespace) -> int:
             args.workbook,
             args.database,
             profile=profile,
+            expected_sha256=args.expected_sha256,
         )
         print(json.dumps(project.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
         return 0
@@ -294,6 +322,11 @@ def _sync_command(args: argparse.Namespace) -> int:
     if args.sync_command == "move":
         plan = plan_device_move(
             project, args.device_id, args.rack_id, args.start_u, args.end_u, workbook_path=args.workbook,
+        )
+    elif args.sync_command == "edit":
+        plan = plan_device_edit(
+            project, args.device_id, args.rack_id, args.start_u, args.end_u,
+            display_text=args.text, workbook_path=args.workbook,
         )
     elif args.sync_command == "add-device":
         plan = plan_device_add(

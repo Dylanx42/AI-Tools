@@ -38,6 +38,18 @@ python -m racktool export project.sqlite standard.xlsx --layout standard
 实际问题、原版面核对与回归见 [本轮验证记录](docs/gates/room-export-skill.md) 和
 [2026-10-14 更新](docs/updates/2026-10-14-skill-room-export.md)。
 
+## 本轮新增工作流（2026-10-15）
+
+自然语言通过 Skill 调用 `conversation query/preview/apply`，可按机房、柜名、设备文字和 U 位
+唯一定位，查询空闲区间并审阅/提交同一计划。`sync edit` 支持已有设备显式改高及跨机房移动。
+`layout inspect/propose/check` 给陌生布局规则与低置信解释，导入可锁定 `--expected-sha256`。
+新导出的设备位置表可用 `position-table preview/apply` 校验后整批回导，保留身份与恢复备份。
+
+回导需保留隐藏 ID/元数据，整表排序；修改 U 范围时同步高度，拒绝增删行和修改状态。
+旧版本导出需从现有 SQLite 重新导出后使用。实际 Agent 软件和 Excel/WPS 人工验收独立记录。
+详见 [设计与限制](docs/decisions/ADR-016-skill-workflows-and-table-roundtrip.md) 和
+[本轮记录](docs/updates/2026-10-15-five-skill-workflows.md)。
+
 ## 历史 GUI 与自动化状态
 
 **V0.1～V0.5 automated gates PASS**。V0.1 负责只读扫描，V0.2 负责 YAML Profile，V0.3 负责

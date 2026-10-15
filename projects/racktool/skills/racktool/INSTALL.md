@@ -1,11 +1,11 @@
 # RackTool Skill 安装与更新
 
-适用版本：独立包 `2026.10.15.1`；安装方式核对日期：2026-10-15。
+适用版本：独立包 `2026.10.15.2`；安装方式核对日期：2026-10-15。
 
 ## 先分清两种包
 
 - 旧的无版本会话附件 `RackTool-Skill.zip` 仅含说明，依赖已有 RackTool 仓库和 Python 环境。
-- 正式发布 `racktool-skill-v2026.10.15.1` 下的 `RackTool-Skill.zip` 包含 RackCore、CLI、Profile、技能说明、安装器，以及
+- 正式发布 `racktool-skill-v2026.10.15.2` 下的 `RackTool-Skill.zip` 包含 RackCore、CLI、Profile、技能说明、安装器，以及
   openpyxl / et_xmlfile / PyYAML 的固定版本纯 Python 依赖和许可证。安装后不用克隆 AI-Tools，
   不用 pip 安装 RackTool，不需要 GUI/Qt，也不用访问 GitHub 才能解析或编辑 Excel。
 - 包不包含 Python 解释器、Agent 软件、业务 Excel、项目 SQLite。电脑需要 Python 3.11+，
@@ -15,9 +15,9 @@
 
 ## 成品包下载（普通安装）
 
-- [完整 ZIP](https://github.com/Dylanx42/AI-Tools/releases/download/racktool-skill-v2026.10.15.1/RackTool-Skill.zip)
-- [SHA256 校验文件](https://github.com/Dylanx42/AI-Tools/releases/download/racktool-skill-v2026.10.15.1/RackTool-Skill.zip.sha256)
-- [发布页](https://github.com/Dylanx42/AI-Tools/releases/tag/racktool-skill-v2026.10.15.1)
+- [完整 ZIP](https://github.com/Dylanx42/AI-Tools/releases/download/racktool-skill-v2026.10.15.2/RackTool-Skill.zip)
+- [SHA256 校验文件](https://github.com/Dylanx42/AI-Tools/releases/download/racktool-skill-v2026.10.15.2/RackTool-Skill.zip.sha256)
+- [发布页](https://github.com/Dylanx42/AI-Tools/releases/tag/racktool-skill-v2026.10.15.2)
 
 以上路径用于本次正式发布；下载前确认发布页已存在并有对应附件。普通安装直接下载发布附件，
 **不拉源码、不自行构建、不执行源码模式 install_skill.py**。下载失败时报告失败，不退回开发者构建。
@@ -107,6 +107,6 @@ TRAE CLI 的目录另有规则，不要把 IDE 的路径当成 CLI 的路径。
 本 monorepo 包含多个项目，不使用仓库全局 latest/download 作为 RackTool 的固定入口。
 
 开发者本地重建仅作调试：在隔离环境安装 bundle-requirements.txt 后运行
-`python scripts/build_skill_bundle.py --version 2026.10.15.1 --output dist/RackTool-Skill.zip`。
+`python scripts/build_skill_bundle.py --version 2026.10.15.2 --output dist/RackTool-Skill.zip`。
 包记录 Git 提交、dirty 状态、依赖版本和文件 SHA256，发布只接受 source_dirty=false。
 代码/文档和包版本改变后发布新标签，不覆盖旧 Release 或移动既有标签。

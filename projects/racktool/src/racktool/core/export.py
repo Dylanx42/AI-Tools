@@ -20,6 +20,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from racktool.core.identity import normalize_path, sha256_file
 from racktool.core.ooxml import load_xlsx_workbook
+from racktool.core.position_table import position_metadata_digest, write_position_metadata
 from racktool.core.project import project_error_conflicts, rescan_workbook
 from racktool.core.source_export import append_position_sheet
 from racktool.core.workbook import scan_workbook
@@ -86,6 +87,7 @@ class _ExportManifest:
     source_sheets: tuple[SheetInfo, ...] = ()
     source_metadata: tuple[str, ...] = ()
     source_payload: bytes = b""
+    position_metadata_digest: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -607,6 +609,7 @@ def _write_position_sheet(
     sheet.page_setup.fitToWidth = 1
     sheet.page_setup.fitToHeight = 0
     sheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    write_position_metadata(sheet, project)
     return cast(str, sheet.title)
 
 
@@ -680,7 +683,8 @@ def _build_workbook(
         rack_titles = _write_rack_sheet(workbook, project) if layout == "standard" else ()
         position_sheet = _write_position_sheet(workbook, project, rows)
         return workbook, _ExportManifest(rack_titles, tuple(rows), tuple(workbook.sheetnames),
-                                         position_sheet, source_sheets, metadata, payload)
+                                         position_sheet, source_sheets, metadata, payload,
+                                         position_metadata_digest(workbook[position_sheet]))
     except Exception:
         workbook.close()
         raise
@@ -692,6 +696,8 @@ def _validate_export(path: Path, manifest: _ExportManifest) -> None:
         if tuple(workbook.sheetnames) != manifest.sheet_names:
             raise ValueError("导出验证失败：工作表结构不完整。")
         position_sheet = workbook[manifest.position_sheet]
+        if position_metadata_digest(position_sheet) != manifest.position_metadata_digest:
+            raise ValueError("导出验证失败：设备位置表回导元数据发生变化。")
         headers = tuple(position_sheet.cell(1, column).value for column in range(1, 10))
         if headers != _POSITION_HEADERS:
             raise ValueError("导出验证失败：设备位置表标题不完整。")

@@ -59,6 +59,18 @@ def test_bundle_is_detached_and_uses_only_pure_python_dependencies(bundle: Path)
     run(bundle, "gui", success=False)
 
 
+def test_bundle_includes_detached_workflow_verification(bundle: Path, tmp_path: Path) -> None:
+    evidence = tmp_path / "workflow evidence"
+    result = subprocess.run([
+        sys.executable, "-S", str(bundle / "scripts" / "verify_skill_workflows.py"),
+        "--runner", str(bundle / "scripts" / "run.py"), "--output", str(evidence),
+    ], cwd=tmp_path, env=dict(os.environ, PYTHONPATH=str(tmp_path / "unrelated")),
+        encoding="utf-8", capture_output=True, check=False)
+    assert result.returncode == 0, result.stderr + result.stdout
+    report = json.loads((evidence / "report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "passed"
+
+
 def test_bundle_runs_draft_edits_and_refuses_conflicts(bundle: Path, tmp_path: Path) -> None:
     database, output = tmp_path / "draft.sqlite", tmp_path / "empty.xlsx"
     run(bundle, "project", "create", str(database), "--count", "18", "--height", "42")
