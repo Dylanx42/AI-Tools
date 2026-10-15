@@ -187,6 +187,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # JSON transport is UTF-8 even when Windows redirects a legacy-codepage
+    # console to an Agent pipe. StringIO/capture streams need no reconfiguration.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

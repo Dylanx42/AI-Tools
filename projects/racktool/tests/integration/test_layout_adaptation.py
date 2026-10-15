@@ -66,7 +66,7 @@ def test_unknown_fixed_layout_proposal_import_and_rescan(tmp_path: Path) -> None
     assert result["status"] == "ready_for_import"
     assert result["dry_run"]["dry_run"] is True
     assert result["dry_run"]["selected_sheets"] == ("Room A",)
-    yaml_text = profile_path.read_text()
+    yaml_text = profile_path.read_text(encoding="utf-8")
     assert "secret" not in yaml_text
     assert "192.0.2.1" not in yaml_text
     assert "private device text" not in yaml_text

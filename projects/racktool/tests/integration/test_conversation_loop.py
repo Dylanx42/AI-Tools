@@ -61,7 +61,7 @@ def test_plan_tampering_and_wrong_token_refuse_without_writes(tmp_path: Path, ta
     source, database, _project = _bound(tmp_path)
     plan = tmp_path / "plan.json"
     preview = preview_conversation_edit(database, _edit(), plan)
-    envelope = json.loads(plan.read_text())
+    envelope = json.loads(plan.read_text(encoding="utf-8"))
     if tamper == "token":
         envelope["token"] = "0" * 64
     else:
@@ -157,7 +157,7 @@ def test_bound_add_literal_text_and_restart_through_cli(tmp_path: Path) -> None:
     environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"))
     def run(*args):
         result = subprocess.run([sys.executable, "-m", "racktool", *args], env=environment,
-                                capture_output=True, text=True, check=True)
+                                capture_output=True, encoding="utf-8", check=True)
         return json.loads(result.stdout)
     before = sha256_file(source), sha256_file(database)
     preview = run("conversation", "preview", str(database), "--request", str(request_path), "--plan", str(plan))
@@ -168,6 +168,27 @@ def test_bound_add_literal_text_and_restart_through_cli(tmp_path: Path) -> None:
     rows = run("conversation", "query", str(database), "--request", str(query_path))["rows"]
     assert rows[0]["height_u"] == 2
     assert rows[0]["device_id"] == preview["summary"]["device_id"]
+
+
+def test_source_cli_json_is_utf8_with_legacy_redirected_stdio(tmp_path: Path) -> None:
+    _source, database, _project = _bound(tmp_path)
+    request = tmp_path / "utf8-request.json"
+    request.write_text(json.dumps({"selector": {"device": "交换机"}}, ensure_ascii=False), encoding="utf-8")
+    environment = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2] / "src"),
+                       PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+    result = subprocess.run([sys.executable, "-m", "racktool", "conversation", "query",
+                             str(database), "--request", str(request)], env=environment,
+                            capture_output=True, encoding="utf-8", check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["rows"][0]["device"] == "交换机"
+    request.write_text(json.dumps({"operation": "edit", "selector": {"rack": "A01"},
+                                   "text": "改名"}, ensure_ascii=False), encoding="utf-8")
+    rejected = subprocess.run([sys.executable, "-m", "racktool", "conversation", "preview",
+                               str(database), "--request", str(request), "--plan", str(tmp_path / "unused.json")],
+                              env=environment, capture_output=True, encoding="utf-8", check=False)
+    assert rejected.returncode == 2, rejected.stderr
+    response = json.loads(rejected.stdout)
+    assert response["status"] == "rejected" and "明确" in response["message"]
 
 
 @pytest.mark.parametrize("failure", ["marker", "result-hash", "lock-cleanup"])

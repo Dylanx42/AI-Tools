@@ -12,7 +12,8 @@ from pathlib import Path
 def test_scripted_conversation_and_table_workflow(tmp_path: Path) -> None:
     project = Path(__file__).resolve().parents[2]
     evidence = tmp_path / "evidence with spaces"
-    environment = dict(os.environ, PYTHONPATH=str(project / "src"))
+    environment = dict(os.environ, PYTHONPATH=str(project / "src"),
+                       PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
     result = subprocess.run([
         sys.executable, str(project / "scripts" / "verify_skill_workflows.py"),
         "--output", str(evidence),
