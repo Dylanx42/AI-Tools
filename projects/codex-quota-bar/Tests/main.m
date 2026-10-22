@@ -202,7 +202,21 @@ static void TestResetCreditsMapping(void) {
     Check([credits.expiries[0] compare:credits.expiries[1]] == NSOrderedAscending, @"Nearest coupon expiry comes first");
     Check([QuotaResetCreditsText(credits, NO, nil) containsString:@"最近"], @"Multiple coupons show nearest expiry");
     QuotaResetCredits *listOnly = QuotaParseResetCredits(JSON(@{@"credits": rows}), @"test-main", nil);
-    Check(listOnly.availableCount.integerValue == 2, @"Complete credit list supplies count when summary is absent");
+    Check(!listOnly, @"Statusless dates cannot supply an available count without a summary");
+    NSArray *classifiedRows = @[
+        @{@"status": @"available", @"expires_at": @"2099-03-02T10:00:00Z"},
+        @{@"status": @"redeemed", @"expires_at": @"2099-01-01T10:00:00Z"},
+        @{@"status": @"pending", @"expires_at": @"2099-02-01T10:00:00Z"}
+    ];
+    QuotaResetCredits *classified = QuotaParseResetCredits(JSON(@{@"credits": classifiedRows}), @"test-pro", nil);
+    Check(classified.availableCount.integerValue == 1 && classified.expiries.count == 1,
+          @"Only available rows supply a derived count and expiry");
+    QuotaResetCredits *withSummary = QuotaParseResetCredits(JSON(@{@"available_count": @1, @"credits": classifiedRows}), @"test-pro", nil);
+    Check(withSummary.expiries.count == 1 && [withSummary.expiries[0] isEqual:classified.expiries[0]],
+          @"Redeemed and pending credits cannot become the nearest available expiry");
+    QuotaResetCredits *ambiguous = QuotaParseResetCredits(JSON(@{@"available_count": @1, @"credits": rows}), @"test-pro", nil);
+    Check(ambiguous.availableCount.integerValue == 1 && !ambiguous.expiries.count,
+          @"Statusless list that disagrees with the summary preserves count without inventing expiry");
     QuotaResetCredits *zero = QuotaParseResetCredits(JSON(@{@"available_count": @0, @"credits": @[]}), @"test-main", nil);
     Check(zero && zero.availableCount.integerValue == 0 && [QuotaResetCreditsText(zero, NO, nil) isEqual:@"重置券 0 张"],
           @"Confirmed zero is shown distinctly from unavailable data");

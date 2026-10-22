@@ -142,19 +142,29 @@ QuotaResetCredits *QuotaParseResetCredits(NSData *data, NSString *accountID, NSE
         return nil;
     }
     NSMutableArray<NSDate *> *expiries = [NSMutableArray array];
+    NSMutableArray<NSDate *> *unclassifiedExpiries = [NSMutableArray array];
     NSDate *now = NSDate.date;
     BOOL completeList = YES;
     for (id row in ([rows isKindOfClass:NSArray.class] ? rows : @[])) {
         if (![row isKindOfClass:NSDictionary.class]) { completeList = NO; continue; }
+        id status = row[@"status"];
+        // Newer payloads can include spent/pending credits with a future expiry.
+        if (status && ![status isEqual:@"available"]) continue;
         NSDate *expiry = QuotaISODate(row[@"expires_at"]);
         NSDate *granted = QuotaISODate(row[@"granted_at"]);
         if (!expiry || (row[@"granted_at"] && !granted)) { completeList = NO; continue; }
         if ([expiry compare:now] != NSOrderedDescending || (granted && [granted compare:now] == NSOrderedDescending)) continue;
-        [expiries addObject:expiry];
+        if (status) [expiries addObject:expiry];
+        else [unclassifiedExpiries addObject:expiry];
     }
-    if (!countProvided && !completeList) {
+    if (!countProvided && (!completeList || unclassifiedExpiries.count)) {
         if (error) *error = QuotaError(QuotaErrorProtocol, @"OpenCodex 重置券明细不完整，无法确认数量。");
         return nil;
+    }
+    // OpenCodex 2.90.0 strips per-credit status. Retain its dates only when
+    // the complete live list reconciles with the authoritative available count.
+    if (validCount && completeList && count.unsignedIntegerValue == expiries.count + unclassifiedExpiries.count) {
+        [expiries addObjectsFromArray:unclassifiedExpiries];
     }
     [expiries sortUsingSelector:@selector(compare:)];
     QuotaResetCredits *result = [QuotaResetCredits new];
