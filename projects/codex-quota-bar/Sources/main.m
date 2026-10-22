@@ -1,50 +1,11 @@
 #import <Cocoa/Cocoa.h>
+#import "OpenCodexQuota.h"
 
-static NSString *const QuotaErrorDomain = @"app.codexquotabar.desktop";
 static NSString *const QuotaHistoryHeader = @"recorded_at,primary_used_percent,primary_remaining_percent,primary_window_minutes,primary_resets_at,secondary_used_percent,secondary_remaining_percent,secondary_window_minutes,secondary_resets_at\n";
 static const NSTimeInterval QuotaTrendWindowInterval = 7.0 * 24.0 * 60.0 * 60.0;
 static const NSTimeInterval QuotaTrendGapThreshold = 6.0 * 60.0 * 60.0;
 static const CGFloat QuotaTrendSmoothingSigma = 8.0;
-
-typedef NS_ENUM(NSInteger, QuotaErrorCode) {
-    QuotaErrorCodexNotFound = 1,
-    QuotaErrorAlreadyRefreshing,
-    QuotaErrorLaunchFailed,
-    QuotaErrorProtocol,
-    QuotaErrorTimedOut,
-};
-
-static NSError *QuotaError(QuotaErrorCode code, NSString *description) {
-    return [NSError errorWithDomain:QuotaErrorDomain
-                               code:code
-                           userInfo:@{NSLocalizedDescriptionKey: description}];
-}
-
-@interface QuotaWindow : NSObject
-@property(nonatomic) NSInteger usedPercent;
-@property(nonatomic) NSInteger durationMinutes;
-@property(nonatomic, strong) NSDate *resetsAt;
-@property(nonatomic, readonly) NSInteger remainingPercent;
-@end
-
-@implementation QuotaWindow
-- (NSInteger)remainingPercent {
-    return MAX(0, MIN(100, 100 - self.usedPercent));
-}
-@end
-
-@interface QuotaSnapshot : NSObject
-@property(nonatomic, strong, nullable) QuotaWindow *primary;
-@property(nonatomic, strong, nullable) QuotaWindow *secondary;
-@property(nonatomic, copy, nullable) NSString *planType;
-@property(nonatomic, copy, nullable) NSString *creditBalance;
-@property(nonatomic, strong, nullable) NSNumber *resetCreditCount;
-@property(nonatomic, copy, nullable) NSArray<NSDate *> *resetCreditExpiries;
-@property(nonatomic, strong) NSDate *updatedAt;
-@end
-
-@implementation QuotaSnapshot
-@end
+static NSString *const QuotaSelectedAccountKey = @"OpenCodexMonitoredAccountID";
 
 @interface QuotaHistoryPoint : NSObject
 @property(nonatomic, strong) NSDate *recordedAt;
@@ -835,7 +796,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     formatter.dateFormat = @"M/d HH:mm";
     NSString *reset = window.resetsAt
         ? [NSString stringWithFormat:@"%@ 重置 · 已用 %ld%%", [formatter stringFromDate:window.resetsAt], (long)window.usedPercent]
-        : @"窗口暂不可用";
+        : (window ? [NSString stringWithFormat:@"已用 %ld%% · 重置时间暂无数据", (long)window.usedPercent] : @"暂无数据");
     QuotaLabel(self, reset, NSMakeRect(0, 38, NSWidth(frame), 16),
                11, NSFontWeightRegular, NSColor.secondaryLabelColor);
     self.toolTip = reset;
@@ -873,7 +834,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                          loading:(BOOL)loading error:(NSError *)error {
     self = [super initWithFrame:NSMakeRect(0, 0, 400, 466)];
     if (!self) return nil;
-    QuotaLabel(self, @"Codex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
+    QuotaLabel(self, @"OpenCodex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
     if (snapshot.planType.length) {
         NSString *planName = snapshot.planType.uppercaseString;
         _planBadgeWidth = MIN(96, [planName sizeWithAttributes:@{NSFontAttributeName:[NSFont systemFontOfSize:10 weight:NSFontWeightSemibold]}].width + 16);
@@ -884,20 +845,20 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         plan.toolTip = [NSString stringWithFormat:@"当前套餐：%@", snapshot.planType];
     }
     [self addSubview:[[QuotaCardView alloc] initWithWindow:snapshot.primary
-                                                   name:QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口")
+                                                   name:QuotaWindowName(snapshot.primary.durationMinutes, @"5 小时")
                                                   color:NSColor.systemBlueColor
                                                   frame:NSMakeRect(22, 58, 356, 78)
                                                  first:YES]];
     [self addSubview:[[QuotaCardView alloc] initWithWindow:snapshot.secondary
-                                                   name:QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口")
+                                                   name:QuotaWindowName(snapshot.secondary.durationMinutes, @"7 天")
                                                   color:NSColor.systemPurpleColor
                                                   frame:NSMakeRect(22, 154, 356, 78)
                                                  first:NO]];
 
     QuotaTrendView *trend = [[QuotaTrendView alloc] initWithPoints:points];
     trend.frame = NSMakeRect(16, 248, 368, 184);
-    trend.primaryName = QuotaWindowName(snapshot.primary.durationMinutes, @"短窗口");
-    trend.secondaryName = QuotaWindowName(snapshot.secondary.durationMinutes, @"长窗口");
+    trend.primaryName = QuotaWindowName(snapshot.primary.durationMinutes, @"5 小时");
+    trend.secondaryName = QuotaWindowName(snapshot.secondary.durationMinutes, @"7 天");
     trend.primaryPreviousResetAt = QuotaPreviousResetAt(snapshot.primary);
     trend.secondaryPreviousResetAt = QuotaPreviousResetAt(snapshot.secondary);
     NSDateFormatter *previousResetFormatter = [NSDateFormatter new];
@@ -913,51 +874,12 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                                 trend.secondaryName, secondaryPreviousReset];
     [self addSubview:trend];
 
-    NSMutableArray<NSString *> *details = [NSMutableArray array];
-    NSString *resetCreditTip = nil;
-    if (snapshot.creditBalance.length) {
-        NSDecimalNumber *balance = [NSDecimalNumber decimalNumberWithString:snapshot.creditBalance];
-        NSNumberFormatter *formatter = [NSNumberFormatter new];
-        formatter.numberStyle = NSNumberFormatterDecimalStyle;
-        formatter.maximumFractionDigits = 2;
-        NSString *value = [balance isEqual:NSDecimalNumber.notANumber] ? snapshot.creditBalance : [formatter stringFromNumber:balance];
-        [details addObject:[NSString stringWithFormat:@"Credits %@", value]];
-    }
-    if (snapshot.resetCreditCount) {
-        NSDateFormatter *expiryFormatter = [NSDateFormatter new];
-        expiryFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
-        expiryFormatter.dateFormat = @"M/d HH:mm";
-        NSMutableArray<NSString *> *expiries = [NSMutableArray array];
-        for (NSDate *expiry in snapshot.resetCreditExpiries) {
-            [expiries addObject:[expiryFormatter stringFromDate:expiry]];
-        }
-        NSString *creditText = [NSString stringWithFormat:@"重置券 %@", snapshot.resetCreditCount];
-        NSString *creditTip = nil;
-        if (expiries.count == 1) {
-            creditText = [creditText stringByAppendingFormat:@" · %@ 到期", expiries.firstObject];
-        } else if (expiries.count > 1) {
-            creditText = [creditText stringByAppendingFormat:@" · 最近 %@ 到期", expiries.firstObject];
-            creditTip = [NSString stringWithFormat:@"重置券到期：%@", [expiries componentsJoinedByString:@"、"]];
-            if (snapshot.resetCreditCount.integerValue > (NSInteger)expiries.count) {
-                creditTip = [creditTip stringByAppendingString:@"；其余券未返回到期时间"];
-            }
-        }
-        [details addObject:creditText];
-        resetCreditTip = creditTip;
-    }
     _footerY = 442;
-    if (details.count) {
-        NSTextField *detailLabel = QuotaLabel(self, [details componentsJoinedByString:@"    "],
-                                             NSMakeRect(22, 440, 356, 16), 11, NSFontWeightMedium, NSColor.secondaryLabelColor);
-        detailLabel.toolTip = resetCreditTip ?: detailLabel.stringValue;
-        _footerY = 466;
-        [self setFrameSize:NSMakeSize(400, 490)];
-    }
     NSDateFormatter *updated = [NSDateFormatter new];
     updated.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
     updated.dateFormat = @"HH:mm:ss";
     NSString *status = loading ? @"正在更新额度…" : error ? (snapshot ? @"更新失败 · 当前为上次数据" : @"额度读取失败 · 请尝试刷新") :
-        snapshot ? [NSString stringWithFormat:@"%@ 更新", [updated stringFromDate:snapshot.updatedAt]] : @"等待额度数据";
+        snapshot ? [NSString stringWithFormat:@"%@ 读取 · 来源 OpenCodex", [updated stringFromDate:snapshot.updatedAt]] : @"等待额度数据";
     _statusColor = loading ? NSColor.systemBlueColor : error ? NSColor.systemOrangeColor :
                    snapshot ? NSColor.systemGreenColor : NSColor.tertiaryLabelColor;
     NSTextField *statusLabel = QuotaLabel(self, status, NSMakeRect(34, _footerY, 378, 16), 11,
@@ -989,339 +911,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 }
 @end
 
-typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nullable error);
-
-@interface CodexQuotaService : NSObject
-@property(nonatomic) dispatch_queue_t queue;
-@property(nonatomic, strong, nullable) NSTask *task;
-@property(nonatomic, strong) NSMutableData *outputBuffer;
-@property(nonatomic, copy, nullable) QuotaCompletion completion;
-@property(nonatomic, copy, nullable) dispatch_block_t timeoutBlock;
-@property(nonatomic) BOOL refreshing;
-- (void)fetch:(QuotaCompletion)completion;
-- (void)cancel;
-- (nullable NSURL *)codexExecutableURL;
-- (NSDictionary<NSString *, NSString *> *)launchEnvironmentForExecutableURL:(NSURL *)executableURL;
-@end
-
-@implementation CodexQuotaService
-
-- (instancetype)init {
-    self = [super init];
-    if (self) {
-        _queue = dispatch_queue_create("app.codexquotabar.desktop.service", DISPATCH_QUEUE_SERIAL);
-        _outputBuffer = [NSMutableData data];
-    }
-    return self;
-}
-
-- (void)fetch:(QuotaCompletion)completion {
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(self.queue, ^{
-        typeof(self) self = weakSelf;
-        if (!self) return;
-
-        if (self.refreshing) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, QuotaError(QuotaErrorAlreadyRefreshing, @"额度正在刷新。"));
-            });
-            return;
-        }
-
-        NSURL *executableURL = [self codexExecutableURL];
-        if (!executableURL) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completion(nil, QuotaError(QuotaErrorCodexNotFound, @"找不到 Codex CLI。请先安装或更新 Codex。"));
-            });
-            return;
-        }
-
-        self.refreshing = YES;
-        self.completion = completion;
-        [self.outputBuffer setLength:0];
-
-        NSTask *task = [[NSTask alloc] init];
-        NSPipe *inputPipe = [NSPipe pipe];
-        NSPipe *outputPipe = [NSPipe pipe];
-        NSPipe *errorPipe = [NSPipe pipe];
-
-        task.executableURL = executableURL;
-        task.arguments = @[@"app-server"];
-        task.environment = [self launchEnvironmentForExecutableURL:executableURL];
-        task.standardInput = inputPipe;
-        task.standardOutput = outputPipe;
-        task.standardError = errorPipe;
-        self.task = task;
-
-        outputPipe.fileHandleForReading.readabilityHandler = ^(NSFileHandle *handle) {
-            NSData *data = handle.availableData;
-            if (data.length == 0) return;
-            dispatch_async(weakSelf.queue, ^{
-                [weakSelf consumeData:data];
-            });
-        };
-
-        task.terminationHandler = ^(NSTask *terminatedTask) {
-            dispatch_async(weakSelf.queue, ^{
-                typeof(self) self = weakSelf;
-                if (!self || !self.refreshing) return;
-                NSData *errorData = [errorPipe.fileHandleForReading readDataToEndOfFile];
-                NSString *message = [[NSString alloc] initWithData:errorData encoding:NSUTF8StringEncoding];
-                message = [message stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-                if (message.length == 0) {
-                    message = [NSString stringWithFormat:@"进程已退出（状态 %d）", terminatedTask.terminationStatus];
-                }
-                [self finishWithSnapshot:nil error:QuotaError(QuotaErrorProtocol, [@"Codex 返回异常：" stringByAppendingString:message])];
-            });
-        };
-
-        NSError *launchError = nil;
-        if (![task launchAndReturnError:&launchError]) {
-            NSString *message = [@"无法启动 Codex：" stringByAppendingString:launchError.localizedDescription ?: @"未知错误"];
-            [self finishWithSnapshot:nil error:QuotaError(QuotaErrorLaunchFailed, message)];
-            return;
-        }
-
-        NSString *clientVersion = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
-        if (![clientVersion isKindOfClass:NSString.class] || clientVersion.length == 0) {
-            clientVersion = @"unknown";
-        }
-        NSDictionary *initialize = @{
-            @"method": @"initialize",
-            @"id": @0,
-            @"params": @{
-                @"clientInfo": @{
-                    @"name": @"codex_quota_bar",
-                    @"title": @"Codex Quota Bar",
-                    @"version": clientVersion
-                }
-            }
-        };
-        [self sendObject:initialize toHandle:inputPipe.fileHandleForWriting];
-
-        dispatch_block_t timeout = dispatch_block_create(0, ^{
-            typeof(self) self = weakSelf;
-            if (!self || !self.refreshing) return;
-            [self finishWithSnapshot:nil error:QuotaError(QuotaErrorTimedOut, @"读取超时，请确认 Codex 已登录。")];
-        });
-        self.timeoutBlock = timeout;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC), self.queue, timeout);
-    });
-}
-
-- (void)cancel {
-    __weak typeof(self) weakSelf = self;
-    dispatch_async(self.queue, ^{
-        [weakSelf finishWithSnapshot:nil error:nil];
-    });
-}
-
-- (nullable NSURL *)codexExecutableURL {
-    NSMutableArray<NSString *> *candidates = [@[
-        @"/opt/homebrew/bin/codex",
-        @"/usr/local/bin/codex",
-        @"/Applications/Codex.app/Contents/Resources/codex",
-        @"/Applications/Codex.app/Contents/Resources/bin/codex"
-    ] mutableCopy];
-    [candidates addObject:[NSHomeDirectory() stringByAppendingPathComponent:@".local/bin/codex"]];
-
-    for (NSString *path in candidates) {
-        if ([NSFileManager.defaultManager isExecutableFileAtPath:path]) {
-            return [NSURL fileURLWithPath:path];
-        }
-    }
-    return nil;
-}
-
-- (NSDictionary<NSString *, NSString *> *)launchEnvironmentForExecutableURL:(NSURL *)executableURL {
-    NSMutableDictionary<NSString *, NSString *> *environment = [NSProcessInfo.processInfo.environment mutableCopy];
-    NSMutableOrderedSet<NSString *> *pathEntries = [NSMutableOrderedSet orderedSet];
-    NSString *home = NSHomeDirectory();
-    NSArray<NSString *> *preferredEntries = @[
-        executableURL.URLByDeletingLastPathComponent.path ?: @"",
-        @"/opt/homebrew/bin",
-        @"/usr/local/bin",
-        [home stringByAppendingPathComponent:@".local/bin"],
-        [home stringByAppendingPathComponent:@".volta/bin"],
-        [home stringByAppendingPathComponent:@".asdf/shims"],
-        [home stringByAppendingPathComponent:@".local/share/mise/shims"],
-        @"/usr/bin",
-        @"/bin",
-        @"/usr/sbin",
-        @"/sbin"
-    ];
-
-    for (NSString *entry in preferredEntries) {
-        if (entry.length > 0) [pathEntries addObject:entry];
-    }
-
-    NSString *inheritedPath = environment[@"PATH"];
-    for (NSString *entry in [inheritedPath componentsSeparatedByString:@":"]) {
-        if (entry.length > 0) [pathEntries addObject:entry];
-    }
-
-    environment[@"PATH"] = [pathEntries.array componentsJoinedByString:@":"];
-    return environment;
-}
-
-- (void)consumeData:(NSData *)data {
-    [self.outputBuffer appendData:data];
-    const uint8_t newline = '\n';
-
-    while (self.outputBuffer.length > 0) {
-        NSRange newlineRange = [self.outputBuffer rangeOfData:[NSData dataWithBytes:&newline length:1]
-                                                      options:0
-                                                        range:NSMakeRange(0, self.outputBuffer.length)];
-        if (newlineRange.location == NSNotFound) break;
-
-        NSData *lineData = [self.outputBuffer subdataWithRange:NSMakeRange(0, newlineRange.location)];
-        [self.outputBuffer replaceBytesInRange:NSMakeRange(0, NSMaxRange(newlineRange)) withBytes:NULL length:0];
-        if (lineData.length > 0) [self processLine:lineData];
-    }
-}
-
-- (void)processLine:(NSData *)data {
-    NSError *jsonError = nil;
-    id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:&jsonError];
-    if (![object isKindOfClass:NSDictionary.class]) return;
-
-    NSDictionary *message = object;
-    NSNumber *identifier = [message[@"id"] isKindOfClass:NSNumber.class] ? message[@"id"] : nil;
-
-    if (identifier.integerValue == 0 && message[@"result"]) {
-        NSPipe *inputPipe = [self.task.standardInput isKindOfClass:NSPipe.class] ? self.task.standardInput : nil;
-        if (!inputPipe) {
-            [self finishWithSnapshot:nil error:QuotaError(QuotaErrorProtocol, @"Codex 返回异常：初始化通道不可用")];
-            return;
-        }
-        [self sendObject:@{@"method": @"initialized", @"params": @{}}
-                toHandle:inputPipe.fileHandleForWriting];
-        [self sendObject:@{@"method": @"account/rateLimits/read", @"id": @1}
-                toHandle:inputPipe.fileHandleForWriting];
-        return;
-    }
-
-    if (identifier.integerValue != 1) return;
-
-    NSDictionary *protocolError = [message[@"error"] isKindOfClass:NSDictionary.class] ? message[@"error"] : nil;
-    if (protocolError) {
-        NSString *detail = [protocolError[@"message"] isKindOfClass:NSString.class] ? protocolError[@"message"] : @"未知协议错误";
-        [self finishWithSnapshot:nil error:QuotaError(QuotaErrorProtocol, [@"Codex 返回异常：" stringByAppendingString:detail])];
-        return;
-    }
-
-    NSDictionary *result = [message[@"result"] isKindOfClass:NSDictionary.class] ? message[@"result"] : nil;
-    QuotaSnapshot *snapshot = [self parseSnapshot:result];
-    if (!snapshot) {
-        [self finishWithSnapshot:nil error:QuotaError(QuotaErrorProtocol, @"Codex 返回异常：缺少可识别的额度窗口")];
-        return;
-    }
-
-    [self finishWithSnapshot:snapshot error:nil];
-}
-
-- (nullable QuotaSnapshot *)parseSnapshot:(nullable NSDictionary *)result {
-    if (!result) return nil;
-    NSDictionary *legacy = [result[@"rateLimits"] isKindOfClass:NSDictionary.class] ? result[@"rateLimits"] : nil;
-    NSDictionary *byLimitId = [result[@"rateLimitsByLimitId"] isKindOfClass:NSDictionary.class] ? result[@"rateLimitsByLimitId"] : nil;
-    NSDictionary *codexBucket = [byLimitId[@"codex"] isKindOfClass:NSDictionary.class] ? byLimitId[@"codex"] : nil;
-    NSDictionary *bucket = codexBucket ?: legacy;
-    if (!bucket) return nil;
-
-    QuotaWindow *primary = [self parseWindow:bucket[@"primary"]];
-    QuotaWindow *secondary = [self parseWindow:bucket[@"secondary"]];
-    if (!primary && !secondary) return nil;
-
-    NSDictionary *credits = [bucket[@"credits"] isKindOfClass:NSDictionary.class] ? bucket[@"credits"] : nil;
-    NSDictionary *resetCredits = [result[@"rateLimitResetCredits"] isKindOfClass:NSDictionary.class] ? result[@"rateLimitResetCredits"] : nil;
-
-    QuotaSnapshot *snapshot = [QuotaSnapshot new];
-    snapshot.primary = primary;
-    snapshot.secondary = secondary;
-    snapshot.planType = [bucket[@"planType"] isKindOfClass:NSString.class] ? bucket[@"planType"] : nil;
-    snapshot.creditBalance = [credits[@"balance"] isKindOfClass:NSString.class] ? credits[@"balance"] : nil;
-    snapshot.resetCreditCount = [resetCredits[@"availableCount"] isKindOfClass:NSNumber.class] ? resetCredits[@"availableCount"] : nil;
-    snapshot.resetCreditExpiries = [self resetCreditExpiries:resetCredits[@"credits"]];
-    snapshot.updatedAt = [NSDate date];
-    return snapshot;
-}
-
-- (NSArray<NSDate *> *)resetCreditExpiries:(id)value {
-    // The service may omit the detail rows or cap them. A count without rows is
-    // still valid; only known, future-or-present expiry timestamps are displayed.
-    if (![value isKindOfClass:NSArray.class]) return @[];
-    NSMutableArray<NSDate *> *expiries = [NSMutableArray array];
-    for (id credit in (NSArray *)value) {
-        if (![credit isKindOfClass:NSDictionary.class]) continue;
-        id timestamp = credit[@"expiresAt"];
-        if (![timestamp isKindOfClass:NSNumber.class] || [timestamp doubleValue] <= 0) continue;
-        [expiries addObject:[NSDate dateWithTimeIntervalSince1970:[timestamp doubleValue]]];
-    }
-    [expiries sortUsingComparator:^NSComparisonResult(NSDate *left, NSDate *right) {
-        return [left compare:right];
-    }];
-    return expiries;
-}
-
-- (nullable QuotaWindow *)parseWindow:(id)value {
-    if (![value isKindOfClass:NSDictionary.class]) return nil;
-    NSDictionary *dictionary = value;
-    NSNumber *used = [dictionary[@"usedPercent"] isKindOfClass:NSNumber.class] ? dictionary[@"usedPercent"] : nil;
-    NSNumber *duration = [dictionary[@"windowDurationMins"] isKindOfClass:NSNumber.class] ? dictionary[@"windowDurationMins"] : nil;
-    NSNumber *resetTimestamp = [dictionary[@"resetsAt"] isKindOfClass:NSNumber.class] ? dictionary[@"resetsAt"] : nil;
-    if (!used || !duration || !resetTimestamp) return nil;
-
-    QuotaWindow *window = [QuotaWindow new];
-    window.usedPercent = MAX(0, MIN(100, used.integerValue));
-    window.durationMinutes = duration.integerValue;
-    window.resetsAt = [NSDate dateWithTimeIntervalSince1970:resetTimestamp.doubleValue];
-    return window;
-}
-
-- (void)sendObject:(NSDictionary *)object toHandle:(NSFileHandle *)handle {
-    NSError *error = nil;
-    NSData *json = [NSJSONSerialization dataWithJSONObject:object options:0 error:&error];
-    if (!json || error) {
-        [self finishWithSnapshot:nil error:QuotaError(QuotaErrorProtocol, @"Codex 返回异常：无法编码请求")];
-        return;
-    }
-    NSMutableData *line = [json mutableCopy];
-    const uint8_t newline = '\n';
-    [line appendBytes:&newline length:1];
-    [handle writeData:line];
-}
-
-- (void)finishWithSnapshot:(nullable QuotaSnapshot *)snapshot error:(nullable NSError *)error {
-    if (!self.refreshing) return;
-    self.refreshing = NO;
-
-    if (self.timeoutBlock) {
-        dispatch_block_cancel(self.timeoutBlock);
-        self.timeoutBlock = nil;
-    }
-
-    NSPipe *outputPipe = [self.task.standardOutput isKindOfClass:NSPipe.class] ? self.task.standardOutput : nil;
-    outputPipe.fileHandleForReading.readabilityHandler = nil;
-    self.task.terminationHandler = nil;
-
-    NSPipe *inputPipe = [self.task.standardInput isKindOfClass:NSPipe.class] ? self.task.standardInput : nil;
-    [inputPipe.fileHandleForWriting closeFile];
-    if (self.task.running) [self.task terminate];
-    self.task = nil;
-
-    QuotaCompletion callback = self.completion;
-    self.completion = nil;
-    if (!callback || (!snapshot && !error)) return;
-
-    dispatch_async(dispatch_get_main_queue(), ^{
-        callback(snapshot, error);
-    });
-}
-
-@end
-
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
-@property(nonatomic, strong) CodexQuotaService *service;
+@property(nonatomic, strong) OpenCodexQuotaService *service;
+@property(nonatomic, copy) NSArray<QuotaAccount *> *accounts;
+@property(nonatomic, copy, nullable) NSString *selectedAccountID;
+@property(nonatomic, strong) NSUserDefaults *preferences;
 @property(nonatomic, strong) NSStatusItem *statusItem;
 @property(nonatomic, strong, nullable) NSTimer *timer;
 @property(nonatomic, strong, nullable) QuotaSnapshot *snapshot;
@@ -1332,6 +926,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 @property(nonatomic, strong, nullable) NSDate *lastRefreshCompletedAt;
 @property(nonatomic, strong) NSISO8601DateFormatter *historyDateFormatter;
 @property(nonatomic, strong, nullable) NSURL *historyFileURL;
+@property(nonatomic, strong, nullable) NSURL *historyDirectoryURL;
 @property(nonatomic, copy, nullable) NSString *lastHistorySignature;
 @property(nonatomic, strong) NSMutableArray<QuotaHistoryPoint *> *historyPoints;
 - (void)trimChartPointsToTrendWindow;
@@ -1342,7 +937,10 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 - (instancetype)init {
     self = [super init];
     if (self) {
-        _service = [CodexQuotaService new];
+        _service = [OpenCodexQuotaService new];
+        _accounts = @[];
+        _preferences = NSUserDefaults.standardUserDefaults;
+        _selectedAccountID = [_preferences stringForKey:QuotaSelectedAccountKey];
         _historyDateFormatter = [NSISO8601DateFormatter new];
         _historyDateFormatter.timeZone = NSTimeZone.localTimeZone;
         _historyDateFormatter.formatOptions = NSISO8601DateFormatWithInternetDateTime |
@@ -1354,7 +952,6 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-    [self prepareUsageHistory];
     [self configureStatusItem];
 
     [NSNotificationCenter.defaultCenter addObserver:self
@@ -1397,7 +994,7 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     button.imagePosition = NSImageLeading;
     button.font = [NSFont monospacedDigitSystemFontOfSize:NSFont.systemFontSize weight:NSFontWeightMedium];
     button.title = @"…";
-    button.toolTip = @"正在读取 Codex 额度";
+    button.toolTip = @"正在读取 OpenCodex 额度";
 
     NSMenu *menu = [NSMenu new];
     menu.delegate = self;
@@ -1414,13 +1011,34 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     [self rebuildMenu];
 
     __weak typeof(self) weakSelf = self;
-    [self.service fetch:^(QuotaSnapshot *snapshot, NSError *error) {
+    [self.service fetch:^(NSArray<QuotaAccount *> *accounts, NSError *error) {
         typeof(self) self = weakSelf;
         if (!self) return;
         self.loading = NO;
         NSTimeInterval nextInterval = 60;
-
-        if (snapshot) {
+        QuotaAccount *account = nil;
+        if (accounts) {
+            self.accounts = accounts;
+            account = QuotaSelectedAccount(accounts, self.selectedAccountID);
+            if (account && !self.selectedAccountID.length) {
+                self.selectedAccountID = account.accountID;
+                [self.preferences setObject:self.selectedAccountID forKey:QuotaSelectedAccountKey];
+                [self prepareUsageHistory];
+            }
+            if (!account) {
+                self.snapshot = nil;
+                self.historyFileURL = nil;
+                [self.historyPoints removeAllObjects];
+                error = QuotaError(QuotaErrorAccountUnavailable, accounts.count
+                    ? @"监控账户已不在 OpenCodex 列表中，请在“监控账户”菜单重新选择。"
+                    : @"OpenCodex 尚无 ChatGPT/Codex 账户，请先在 OpenCodex 中登录。");
+            } else {
+                error = account.refreshError;
+                if (!self.historyFileURL) [self prepareUsageHistory];
+            }
+        }
+        QuotaSnapshot *snapshot = account.snapshot;
+        if (snapshot && !error) {
             BOOL changed = [self snapshot:snapshot differsFrom:self.snapshot];
             if (changed) {
                 self.unchangedRefreshCount = 0;
@@ -1437,6 +1055,8 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
                   (long)(snapshot.primary ? snapshot.primary.remainingPercent : -1),
                   (long)(snapshot.secondary ? snapshot.secondary.remainingPercent : -1));
         } else if (error.code != QuotaErrorAlreadyRefreshing) {
+            // A cached reading may be shown, but is never recorded as a fresh sample.
+            if (snapshot && !self.snapshot) self.snapshot = snapshot;
             self.consecutiveFailures += 1;
             self.lastError = error;
             nextInterval = [self nextFailureRefreshInterval];
@@ -1447,6 +1067,23 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         [self rebuildMenu];
         [self scheduleNextRefreshAfter:nextInterval];
     }];
+}
+
+- (void)selectMonitoredAccount:(NSMenuItem *)sender {
+    if (self.loading || ![sender.representedObject isKindOfClass:NSString.class]) return;
+    NSString *identifier = sender.representedObject;
+    if ([identifier isEqualToString:self.selectedAccountID]) return;
+    QuotaAccount *account = QuotaSelectedAccount(self.accounts, identifier);
+    if (!account) return;
+    self.selectedAccountID = identifier;
+    [self.preferences setObject:identifier forKey:QuotaSelectedAccountKey];
+    self.snapshot = account.snapshot;
+    self.lastError = account.refreshError;
+    self.lastRefreshCompletedAt = nil;
+    self.unchangedRefreshCount = 0;
+    self.consecutiveFailures = 0;
+    [self prepareUsageHistory];
+    [self refresh];
 }
 
 - (void)scheduledRefresh:(NSTimer *)timer {
@@ -1490,23 +1127,14 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
     if ([self window:snapshot.primary differsFrom:previous.primary]) return YES;
     if ([self window:snapshot.secondary differsFrom:previous.secondary]) return YES;
     if (![self nullableString:snapshot.planType equals:previous.planType]) return YES;
-    if (![self nullableString:snapshot.creditBalance equals:previous.creditBalance]) return YES;
-    if (![snapshot.resetCreditCount isEqualToNumber:previous.resetCreditCount]) return YES;
-    return ![self dates:snapshot.resetCreditExpiries equal:previous.resetCreditExpiries];
-}
-
-- (BOOL)dates:(nullable NSArray<NSDate *> *)dates equal:(nullable NSArray<NSDate *> *)previous {
-    if (dates.count != previous.count) return NO;
-    for (NSUInteger index = 0; index < dates.count; index++) {
-        if (fabs([dates[index] timeIntervalSinceDate:previous[index]]) > 1) return NO;
-    }
-    return YES;
+    return NO;
 }
 
 - (BOOL)window:(nullable QuotaWindow *)window differsFrom:(nullable QuotaWindow *)previous {
     if (!window || !previous) return window != previous;
     return window.usedPercent != previous.usedPercent ||
            window.durationMinutes != previous.durationMinutes ||
+           (window.resetsAt == nil) != (previous.resetsAt == nil) ||
            fabs([window.resetsAt timeIntervalSinceDate:previous.resetsAt]) > 1;
 }
 
@@ -1532,28 +1160,39 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 }
 
 - (void)prepareUsageHistory {
+    // Clear before opening another file, including on failure, so a new account
+    // can never append to the previous account's CSV.
+    self.historyFileURL = nil;
+    self.lastHistorySignature = nil;
+    [self.historyPoints removeAllObjects];
+    if (!self.selectedAccountID.length) return;
     NSFileManager *fileManager = NSFileManager.defaultManager;
     NSError *error = nil;
-    NSURL *applicationSupportURL = [fileManager URLForDirectory:NSApplicationSupportDirectory
+    NSURL *directoryURL = self.historyDirectoryURL;
+    if (!directoryURL) {
+        NSURL *applicationSupportURL = [fileManager URLForDirectory:NSApplicationSupportDirectory
                                                        inDomain:NSUserDomainMask
                                               appropriateForURL:nil
                                                          create:YES
                                                           error:&error];
-    if (!applicationSupportURL) {
-        NSLog(@"CodexQuotaBar could not locate Application Support: %@", error.localizedDescription);
-        return;
-    }
+        if (!applicationSupportURL) {
+            NSLog(@"CodexQuotaBar could not locate Application Support: %@", error.localizedDescription);
+            return;
+        }
 
-    NSURL *directoryURL = [applicationSupportURL URLByAppendingPathComponent:@"CodexQuotaBar" isDirectory:YES];
+        directoryURL = [[applicationSupportURL URLByAppendingPathComponent:@"CodexQuotaBar" isDirectory:YES]
+                        URLByAppendingPathComponent:@"opencodex-accounts" isDirectory:YES];
+        self.historyDirectoryURL = directoryURL;
+    }
     if (![fileManager createDirectoryAtURL:directoryURL
                withIntermediateDirectories:YES
-                                attributes:nil
+                                attributes:@{NSFilePosixPermissions: @0700}
                                      error:&error]) {
         NSLog(@"CodexQuotaBar could not create history directory: %@", error.localizedDescription);
         return;
     }
 
-    NSURL *fileURL = [directoryURL URLByAppendingPathComponent:@"quota-history.csv" isDirectory:NO];
+    NSURL *fileURL = [directoryURL URLByAppendingPathComponent:QuotaHistoryFileName(self.selectedAccountID) isDirectory:NO];
     if (![fileManager fileExistsAtPath:fileURL.path]) {
         if (![QuotaHistoryHeader writeToURL:fileURL atomically:YES encoding:NSUTF8StringEncoding error:&error]) {
             NSLog(@"CodexQuotaBar could not create history file: %@", error.localizedDescription);
@@ -1640,11 +1279,12 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
         [NSString stringWithFormat:@"%ld", (long)window.usedPercent],
         [NSString stringWithFormat:@"%ld", (long)window.remainingPercent],
         [NSString stringWithFormat:@"%ld", (long)window.durationMinutes],
-        [self.historyDateFormatter stringFromDate:window.resetsAt]
+        window.resetsAt ? [self.historyDateFormatter stringFromDate:window.resetsAt] : @""
     ];
 }
 
 - (void)recordSnapshotIfChanged:(QuotaSnapshot *)snapshot {
+    if (![snapshot.accountID isEqualToString:self.selectedAccountID]) return;
     if (!self.historyFileURL) [self prepareUsageHistory];
     if (!self.historyFileURL) return;
 
@@ -1688,15 +1328,15 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 - (void)updateStatusDisplay {
     NSStatusBarButton *button = self.statusItem.button;
     if (self.snapshot) {
-        NSMutableArray<NSString *> *values = [NSMutableArray array];
-        if (self.snapshot.primary) [values addObject:[NSString stringWithFormat:@"%ld%%", (long)self.snapshot.primary.remainingPercent]];
-        if (self.snapshot.secondary) [values addObject:[NSString stringWithFormat:@"%ld%%", (long)self.snapshot.secondary.remainingPercent]];
-        button.title = values.count ? [values componentsJoinedByString:@" · "] : @"—";
+        NSString *primary = self.snapshot.primary ? [NSString stringWithFormat:@"%ld%%", (long)self.snapshot.primary.remainingPercent] : @"—";
+        NSString *secondary = self.snapshot.secondary ? [NSString stringWithFormat:@"%ld%%", (long)self.snapshot.secondary.remainingPercent] : @"—";
+        button.title = [NSString stringWithFormat:@"%@ · %@", primary, secondary];
         button.toolTip = [self tooltipForSnapshot:self.snapshot];
+        if (self.lastError) button.toolTip = [button.toolTip stringByAppendingFormat:@"\n%@", self.lastError.localizedDescription];
         if (self.loading) button.toolTip = [button.toolTip stringByAppendingString:@"\n正在刷新…"];
     } else if (self.loading) {
         button.title = @"…";
-        button.toolTip = @"正在读取 Codex 额度";
+        button.toolTip = @"正在读取 OpenCodex 额度";
     } else {
         button.title = @"!";
         button.toolTip = self.lastError.localizedDescription ?: @"额度读取失败";
@@ -1706,6 +1346,33 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 - (void)rebuildMenu {
     NSMenu *menu = self.statusItem.menu;
     [menu removeAllItems];
+
+    QuotaAccount *selected = QuotaSelectedAccount(self.accounts, self.selectedAccountID);
+    NSString *selection = selected.displayName ?: (self.selectedAccountID.length ? @"账户不可用，请重新选择" : @"正在读取账户…");
+    NSMenuItem *accountItem = [[NSMenuItem alloc] initWithTitle:[@"监控账户：" stringByAppendingString:selection]
+                                                      action:nil keyEquivalent:@""];
+    accountItem.image = [NSImage imageWithSystemSymbolName:@"person.crop.circle" accessibilityDescription:@"监控账户"];
+    accountItem.toolTip = @"选择仅影响额度栏显示，不改变 OpenCodex 实际使用的账户。";
+    NSMenu *accountMenu = [[NSMenu alloc] initWithTitle:@"监控账户"];
+    accountMenu.autoenablesItems = NO;
+    for (QuotaAccount *account in self.accounts) {
+        NSString *title = account.active ? [account.displayName stringByAppendingString:@"（OpenCodex 当前）"] : account.displayName;
+        NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:@selector(selectMonitoredAccount:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = account.accountID;
+        item.state = [account.accountID isEqualToString:self.selectedAccountID] ? NSControlStateValueOn : NSControlStateValueOff;
+        item.enabled = !self.loading;
+        item.toolTip = account.refreshError.localizedDescription ?: accountItem.toolTip;
+        [accountMenu addItem:item];
+    }
+    if (!self.accounts.count) {
+        NSMenuItem *empty = [[NSMenuItem alloc] initWithTitle:(self.loading ? @"正在读取…" : @"暂无账户，请检查 OpenCodex") action:nil keyEquivalent:@""];
+        empty.enabled = NO;
+        [accountMenu addItem:empty];
+    }
+    accountItem.submenu = accountMenu;
+    [menu addItem:accountItem];
+    [menu addItem:NSMenuItem.separatorItem];
 
     NSMenuItem *dashboardItem = [[NSMenuItem alloc] initWithTitle:@"额度概览" action:nil keyEquivalent:@""];
     dashboardItem.view = [[QuotaDashboardView alloc] initWithSnapshot:self.snapshot
@@ -1733,7 +1400,9 @@ typedef void (^QuotaCompletion)(QuotaSnapshot *_Nullable snapshot, NSError *_Nul
 }
 
 - (NSString *)tooltipForSnapshot:(QuotaSnapshot *)snapshot {
-    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObject:@"Codex 剩余额度"];
+    QuotaAccount *selected = QuotaSelectedAccount(self.accounts, self.selectedAccountID);
+    NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:@"OpenCodex 剩余额度",
+        selected.displayName ?: @"监控账户不可用", nil];
     if (snapshot.primary) {
         [lines addObject:[NSString stringWithFormat:@"%@：%ld%%",
                           [self windowNameForMinutes:snapshot.primary.durationMinutes fallback:@"短窗口"],

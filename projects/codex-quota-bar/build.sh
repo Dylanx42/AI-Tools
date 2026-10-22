@@ -18,6 +18,7 @@ mkdir -p "$MODULE_CACHE"
   -fmodules-cache-path="$MODULE_CACHE" \
   -framework Cocoa \
   "$PROJECT_DIR/Sources/main.m" \
+  "$PROJECT_DIR/Sources/OpenCodexQuota.m" \
   -o "$APP_DIR/Contents/MacOS/CodexQuotaBar"
 
 /bin/cp "$PROJECT_DIR/Info.plist" "$APP_DIR/Contents/Info.plist"

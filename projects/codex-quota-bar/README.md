@@ -1,105 +1,83 @@
 # Codex 额度栏
 
-轻量、原生的 macOS 菜单栏 Codex 额度查看器。它直接通过本机官方 `codex app-server` 读取 ChatGPT Codex 的额度窗口，不解析登录文件，也不需要浏览器 Cookie。
+原生 macOS 菜单栏额度查看器。**0.6.0 / Build 18** 起统一通过本机 OpenCodex 读取已登录的 ChatGPT/Codex 账户，可在菜单里手动选择监控账户。
 
-## 功能
+## 日常使用
 
-- 菜单栏直接显示 5 小时和 7 天窗口的剩余百分比。
-- 点击后查看已用比例、精确重置时间、套餐、Credits 和可用重置券。
-  服务端返回到期时间时，一张重置券直接显示到期时刻；多张显示最近一张，悬停可看全部。
-- 原生概览：两个窗口上下排列，左侧是窗口名和重置时间，右侧是大号剩余百分比，下面一条进度。
-- 智能刷新：额度变化或接近阈值时每 30 秒，短期稳定时每 60 秒，持续稳定后每 2 分钟。
-- 低电量模式降至 5 分钟；连续失败时按 1、2、5 分钟退避。
-- Mac 唤醒后立即刷新；打开菜单且数据超过 20 秒时也会立即刷新。
-- 本地趋势记录：首次读取建立基线，之后只在额度百分比或窗口变化时追加记录；点击菜单栏即可直接查看原生折线图。
-- 趋势图固定查看最新记录往前 7 天，避免固定条数对应的日期范围随使用频率变化；本地 CSV 仍完整保留历史。
-- 图表用蓝紫图例区分两个窗口，按额度变化展开横轴；连续区段内按屏幕距离做局部平滑，再用保形曲线连接。重置只会改变连接方向并用空心圆标出，折线跨越重置、长采样间隔和缺失记录时也保持连接。
-- 将鼠标移入图表绘图区查看数据，无需精确指向圆点：竖向定位线会对准横向最近的采样记录，提示同时显示该记录的真实时间、5 小时与 7 天剩余/已用比例；不对采样点之间的数据做插值。提示会注明该采样点是否检测到重置。
-- 趋势图下方分别显示两个窗口的上一次重置时间，按服务端返回的下一次重置时间和窗口时长计算，不依赖本地历史记录完整性。
-- 无 Dock 图标、无第三方运行时依赖。
+1. 先启动 OpenCodex，在其中完成账户登录；确认 `ocx status` 正常。
+2. 打开额度栏，点击顶部的「监控账户」子菜单，选择要查看的账户。勾选项是监控对象，「OpenCodex 当前」标记的是本次查询报告的选中账户，两者可以不同。
+3. 首次默认选中 OpenCodex 报告的当前账户；没有当前项时选列表首项。之后记住明确的账户 ID，不跟随 OpenCodex 自动换号。已选账户被移除时提示重新选择，不静默追踪另一个账户。
+4. 选择只改变额度栏展示和本地趋势文件，不调用账户切换、优先级、暂停或路由设置接口。读取中暂时禁用选择，避免请求返回时混淆账户。
 
-## 工作方式
+菜单栏固定按「短窗口 · 长窗口」显示剩余百分比。通常是 5 小时 / 7 天；仅返回月窗口时，长窗口显示 30 天。未返回的窗口显示 `—` /「暂无数据」，不视作剩余 100%。接口已用百分比转换成剩余比例后显示。
 
-应用启动本机 `codex app-server`，完成 JSON-RPC 初始化后调用：
+保留双窗口卡片、精确重置时间、最近 7 天的原生趋势图、横向最近真实采样点悬停提示和重置标记。只在额度百分比或窗口变化时追加趋势。CLI 目前不投影 Credits、重置券详情或其他自定义窗口，这些不会被推算或补成零。
 
-```json
-{"method":"account/rateLimits/read","id":1}
+## 数据来源和刷新
+
+每次读取启动一个本机 CLI 子进程，执行已在 OpenCodex **2.90.0** 上验证过的命令：
+
+```sh
+ocx account list openai --quota --refresh --json
 ```
 
-读取成功后立即结束该辅助进程。应用不会调用模型，不消耗对话 Token。
+OpenCodex CLI 负责定位正在运行的服务、管理接口认证、账户凭据和上游额度刷新。额度栏只解析账户 ID、展示名称、套餐、选中状态、额度窗口和刷新状态，不再启动官方 `codex app-server`。应用本身不调用模型；使用额度查询命令，不使用账户验证或推理命令。
 
-## 隐私
+该命令请求刷新整个 Codex 账户列表，额度栏只显示、记录选中的账户。读取也会更新 OpenCodex 自身的额度缓存，供其现有路由规则使用。
 
-- 不读取浏览器 Cookie。
-- 不解析 `~/.codex/auth.json`。
-- 不保存或上传访问令牌、完整额度响应、提示词或聊天记录。
-- 仅在本机保存额度变化时间、百分比、窗口长度和重置时间，用于菜单内的原生趋势图。
-- 只使用 `account/rateLimits/read` 返回的额度窗口、套餐、Credits、重置券数量和重置券到期时间。
-
-完整边界见 [PRIVACY.md](PRIVACY.md)。
+- 额度变化或剩余 ≤20%：30 秒；连续 1～4 次稳定：60 秒；持续稳定：2 分钟。
+- macOS 低电量模式：5 分钟；失败后按 1、2、5 分钟退避。
+- Mac 唤醒后立即读取；打开菜单且距上次成功读取超过 20 秒时也读取；可手动「立即刷新」。
+- CLI 总读取上限 60 秒、输出上限 2 MiB。取消或超时仅结束额度栏启动的查询进程，不停止 OpenCodex 服务。
+- 界面时间是 **CLI 读取时间**，不是上游观察时间。明确失败、超时、需重新登录、暂停或没有额度时提示，缓存不记作新趋势点。部分窗口缺失时仍展示其他已知窗口。
 
 ## 要求
 
-- macOS 13 Ventura 或更高版本。
-- 已安装并登录 Codex CLI。
-- 默认查找 Homebrew、`~/.local/bin` 和 Codex.app 常见安装位置。
+- macOS 13 Ventura 或更高版本，以及 Command Line Tools。
+- 本机 OpenCodex 已安装、服务正在运行、至少登录一个 ChatGPT/Codex 账户；接入基线为 2.90.0。
+- `ocx account list openai --quota --refresh --json` 可正常执行。
+- 自动查找 `/opt/homebrew/bin`、`/usr/local/bin`、`~/.local/bin`、`~/.bun/bin` 和常见版本管理器目录，也支持进程继承的绝对 PATH 目录。启动 CLI 时补全 Node/Bun 常用 PATH，支持从 Finder 启动。
 
-## 构建
+## 构建和安装更新
 
-不需要 Xcode 工程或第三方依赖，安装 Command Line Tools 后执行：
+在本项目目录运行：
 
 ```sh
-chmod +x build.sh
+plutil -lint Info.plist
+./test.sh
 ./build.sh
+codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
 ```
 
-产物：`dist/Codex 额度栏.app`
-
-构建脚本使用本机 ad-hoc 签名，适合本机自用。对外分发需要 Apple Developer ID 签名与公证。
-
-## 安装
+先从菜单退出正在运行的旧额度栏，再覆盖安装：
 
 ```sh
 ditto "dist/Codex 额度栏.app" "/Applications/Codex 额度栏.app"
 open -a "/Applications/Codex 额度栏.app"
 ```
 
-## 验证
+构建使用本机 ad-hoc 签名，无第三方构建依赖。CI 在 macOS 构建和验证；CI 产物不替代 Mac 本地安装与交互验收。当前没有自动更新器或开机自启功能。
 
-```sh
-plutil -lint Info.plist
-codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
-```
+## 本地记录与隐私
 
-## 项目结构
+- 监控账户 ID 保存在应用的 `NSUserDefaults` 偏好中。
+- 新趋势在 `~/Library/Application Support/CodexQuotaBar/opencodex-accounts/account-<账户ID的SHA256>.csv`，按账户 ID 隔离，不写邮箱或完整响应。`__main__` 对应主账户槽位；替换该槽位登录身份前，应备份并移出对应旧 CSV，避免不同身份并入同一槽位历史。
+- 原有 `~/Library/Application Support/CodexQuotaBar/quota-history.csv` 完整保留，不自动迁入任何账户，因为旧版没有记录账户身份。
+- 登录、管理令牌和账户凭据交给 OpenCodex CLI；额度栏不解析 `auth.json`、OpenCodex 凭据文件或 Keychain，不输出原始 CLI stderr，也不保存原始 JSON 响应。
 
-```text
-.
-├── Sources/main.m
-├── Info.plist
-├── build.sh
-├── README.md
-├── PRIVACY.md
-├── SECURITY.md
-└── CHANGELOG.md
-```
+详见 [PRIVACY.md](PRIVACY.md)、[SECURITY.md](SECURITY.md) 和 [接入决策](docs/decisions/0001-opencodex.md)。
 
-## 当前限制
+## 验证与维护交接（2026-10-23）
 
-- 当前仅显示一个 Codex 额度桶的主/次窗口。
-- 不包含自动更新器、开机自启或多 Provider 支持。
-- Bundle 为本机构建；仓库本身不提供 Apple 公证产物。
+触发：用户在 OpenCodex 使用多账户，希望独立选择额度栏的监控对象。本机提供的 2.90.0 CLI 输出证明账户列表、选中 ID、短/周窗口可读取；这些查询发生在代码改动之前，不代表新版 App 已安装或验收。
 
-## 维护交接（2026-10-08）
+本次开发在 Linux 云端完成；macOS 编译、签名和离线回归由项目 CI 检查。测试使用合成数据和模拟 CLI，不连接真实账户。验证结论随本次 PR / [CHANGELOG.md](CHANGELOG.md) 更新。
 
-当前源码版本为 **0.5.6 / Build 17**；折线连接和悬停修复见 [CHANGELOG.md](CHANGELOG.md) 与 [PR #14](https://github.com/Dylanx42/AI-Tools/pull/14)。后续维护从最新 `origin/main`、本 README 和变更记录开始，不需要先翻阅旧会话。
+Mac 本地待验收：
 
-此前本地开发会话记录了 macOS 上的 `plutil` 检查、构建、签名验证通过，并安装了该版本。此次云端交接核对了源码、版本和说明；Linux 环境没有重新进行 macOS 编译或安装，也没有完成下面的人工验收：
+- Finder 启动后可找到 `ocx`，读取账户列表和当前额度；确认版本 0.6.0 / Build 18。
+- 在「监控账户」选择 Plus / Pro，勾选和双窗口数据对应选择；重启 App 后记住选择，OpenCodex 实际选中账户未被额度栏切换。
+- Pro 未返回 5 小时窗口时显示暂无数据；两账户曲线相互独立且旧 CSV 保留。
+- 停止服务、需重新登录或上游失败时提示可读，恢复服务后可刷新；深浅外观、悬停和重置标记正常。
 
-- 将鼠标移入绘图区，确认定位线出现；横向移动时，对应最近的真实采样时间与两种窗口额度。
-- 确认首个采样点、重置点、长时间间隔和缺失值附近的提示内容正确，移出绘图区后定位线消失。
-- 确认重置处保留空心圆，折线持续连接；浅色和深色外观下提示均可读。
-
-这个工具按个人自用维护：云端可以改代码、审查和同步仓库；构建、安装及菜单栏交互验收在 Mac 上完成。每次修复把版本、触发条件、行为变化和验证结果写入仓库，再归档完成的会话。
-
-本地趋势历史 `~/Library/Application Support/CodexQuotaBar/quota-history.csv` 和 `/Applications/Codex 额度栏.app` 不进入 Git。代码同步或会话归档不会把它们迁到云端；换 Mac 时若要保留趋势，另行备份该 CSV。
+源码发布不等于本地 App 已更新。后续维护从最新 `origin/main`、本 README 和变更记录开始。
