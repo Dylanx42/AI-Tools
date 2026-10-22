@@ -28,7 +28,7 @@ jobs:
       - name: Verify bundle
         run: |
           codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
-          lipo -verify_arch arm64 x86_64 "dist/Codex 额度栏.app/Contents/MacOS/CodexQuotaBar"
+          lipo "dist/Codex 额度栏.app/Contents/MacOS/CodexQuotaBar" -verify_arch arm64 x86_64
       - name: Package and verify installation archive
         run: |
           ditto -c -k --sequesterRsrc --keepParent "dist/Codex 额度栏.app" dist/Codex-Quota-Bar.zip
