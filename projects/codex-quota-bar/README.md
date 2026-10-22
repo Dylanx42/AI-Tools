@@ -87,7 +87,7 @@ open "/Applications/Codex 额度栏.app"
 
 - 用户在 Mac 的 OpenCodex 2.90.0 验证了账户列表、当前账户及重置券查询，随后确认 0.6.1 重置券更新正常，并反馈额度新鲜度误报。用户也已对本机安装副本执行解除隔离命令；这不是公证或完整界面验收证据。
 - 2026-10-23，macOS 14 arm64 的 [CI #57](https://github.com/Dylanx42/AI-Tools/actions/runs/39848023047) 已验证 0.6.2 的离线回归、Apple Silicon / Intel 双架构编译、签名及 ZIP 解包权限与签名。测试使用合成数据、模拟 CLI，不连接真实账户。
-- 0.6.3 补充券状态与可用数量不一致的回归；最终构建结果待此次 CI 确认。本次代码与文档在 Linux 云端维护，不能代替 Mac 实机验收。
+- 0.6.3 补充券状态与可用数量不一致的回归；2026-10-23 macOS 14 arm64 的 [CI #61](https://github.com/Dylanx42/AI-Tools/actions/runs/39855573108) 已通过离线回归、双架构构建、签名及 ZIP 解包检查并生成安装包。本次代码与文档在 Linux 云端维护，不能代替 Mac 实机验收。
 
 Mac 本地待验收：
 
