@@ -72,7 +72,7 @@ open -a "/Applications/Codex 额度栏.app"
 
 触发：用户在 OpenCodex 使用多账户，希望独立选择额度栏的监控对象。本机提供的 2.90.0 CLI 输出证明账户列表、选中 ID、短/周窗口可读取；这些查询发生在代码改动之前。随后用户提供了新版 OpenCodex 监控面板截图并反馈重置券缺失，这不代表其他交互已全面验收。
 
-本次开发在 Linux 云端完成。2026-10-23，macOS 14 arm64 的 [CI #47](https://github.com/Dylanx42/AI-Tools/actions/runs/39839840770) 已通过 plist、离线回归、Apple Silicon / Intel 双架构构建、签名、ZIP 解包可执行权限与解包后签名检查，并生成安装包。测试使用合成数据和模拟 CLI，不连接真实账户。0.6.0 源码见 [PR #26](https://github.com/Dylanx42/AI-Tools/pull/26)，尚待合入 main。0.6.1 的重置券恢复、新鲜度确认与迟到结果隔离回归随同一 PR 的 macOS CI 更新；新版尚待 Mac 安装验收。
+本次开发在 Linux 云端完成。2026-10-23，macOS 14 arm64 的 [CI #47](https://github.com/Dylanx42/AI-Tools/actions/runs/39839840770) 已通过 plist、离线回归、Apple Silicon / Intel 双架构构建、签名、ZIP 解包可执行权限与解包后签名检查，并生成安装包。测试使用合成数据和模拟 CLI，不连接真实账户。0.6.0 源码见 [PR #26](https://github.com/Dylanx42/AI-Tools/pull/26)，尚待合入 main。0.6.1 的 [CI #51](https://github.com/Dylanx42/AI-Tools/actions/runs/39845115246) 已通过重置券解析、只读命令、迟到响应隔离、新鲜度确认回归及双架构构建、签名和安装包检查；新版尚待 Mac 安装和真实券数据验收。
 
 Mac 本地待验收：
 
