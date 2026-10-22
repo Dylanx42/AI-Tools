@@ -19,7 +19,8 @@ static NSArray *FixtureRows(void) {
                      @"shortResetAt": @1800000000, @"weeklyPercent": @4, @"weeklyResetAt": @1800600000},
           @"quotaRefresh": @{@"status": @"ok"}},
         @{@"id": @"test-pro", @"type": @"codex", @"label": @"pro", @"active": @YES,
-          @"quota": @{@"weeklyPercent": @2, @"weeklyResetAt": @1800600000}}
+          @"quota": @{@"weeklyPercent": @2, @"weeklyResetAt": @1800600000},
+          @"quotaRefresh": @{@"status": @"ok"}}
     ];
 }
 
@@ -58,6 +59,10 @@ static void TestMapping(void) {
     stale[@"needsReauth"] = @YES;
     Check(QuotaParseAccounts(JSON(@{@"accounts": @[stale]}), nil).firstObject.refreshError != nil,
           @"Expired login is not a successful refresh");
+    NSMutableDictionary *unconfirmed = [FixtureRows()[1] mutableCopy];
+    [unconfirmed removeObjectForKey:@"quotaRefresh"];
+    Check(QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmed]}), nil).firstObject.refreshError != nil,
+          @"Absent refresh outcome is unconfirmed cache, not a fresh sample");
     NSError *error = nil;
     Check(!QuotaParseAccounts(JSON(@{@"accounts": @[FixtureRows()[0], FixtureRows()[0]]}), &error) && error,
           @"Duplicate account identities reject ambiguous data");
@@ -71,9 +76,16 @@ static void TestMapping(void) {
 
 @interface StubQuotaService : OpenCodexQuotaService
 @property(nonatomic, copy) QuotaAccountsCompletion pending;
+@property(nonatomic, copy) QuotaResetCreditsCompletion pendingCredits;
+@property(nonatomic, copy) NSString *creditAccountID;
 @end
 @implementation StubQuotaService
 - (void)fetch:(QuotaAccountsCompletion)completion { self.pending = completion; }
+- (void)fetchResetCreditsForAccountID:(NSString *)accountID completion:(QuotaResetCreditsCompletion)completion {
+    self.creditAccountID = accountID;
+    self.pendingCredits = completion;
+}
+- (void)cancel {} // Keep delayed callbacks available to test the controller's generation guards.
 @end
 
 // No menu-bar registration or window server is needed for controller regression checks.
@@ -87,7 +99,9 @@ static void TestMapping(void) {
 static void TestControllerAndHistory(NSURL *directory) {
     HeadlessDelegate *app = [HeadlessDelegate new];
     StubQuotaService *service = [StubQuotaService new];
+    StubQuotaService *creditService = [StubQuotaService new];
     app.service = service;
+    app.resetCreditService = creditService;
     NSString *suite = [@"quota-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
     app.preferences = [[NSUserDefaults alloc] initWithSuiteName:suite];
     app.selectedAccountID = nil;
@@ -99,6 +113,8 @@ static void TestControllerAndHistory(NSURL *directory) {
     service.pending(accounts, nil);
     Check([app.selectedAccountID isEqual:@"test-pro"], @"Controller initially selects active account");
     Check([[app.preferences stringForKey:QuotaSelectedAccountKey] isEqual:@"test-pro"], @"Selection is persisted");
+    Check([creditService.creditAccountID isEqual:@"test-pro"], @"Reset-credit query targets the monitored account");
+    QuotaResetCreditsCompletion delayedPro = creditService.pendingCredits;
     NSURL *proFile = app.historyFileURL;
     NSData *before = [NSData dataWithContentsOfURL:proFile];
     [app refresh];
@@ -109,6 +125,9 @@ static void TestControllerAndHistory(NSURL *directory) {
     choice.representedObject = @"test-main";
     [app selectMonitoredAccount:choice];
     Check([app.selectedAccountID isEqual:@"test-main"] && ![app.historyFileURL isEqual:proFile], @"Manual selection changes history files");
+    QuotaResetCredits *proCredits = QuotaParseResetCredits(JSON(@{@"available_count": @9}), @"test-pro", nil);
+    delayedPro(proCredits, nil);
+    Check(!app.resetCredits && !app.resetCreditsLoading, @"Late old-account coupon result cannot appear after selection");
     Check(app.historyPoints.count == 0, @"New account starts with its own empty chart");
     // Changing selection during a request must not relabel an in-flight response.
     choice.representedObject = @"test-pro";
@@ -116,6 +135,15 @@ static void TestControllerAndHistory(NSURL *directory) {
     Check([app.selectedAccountID isEqual:@"test-main"], @"Account selection is held while a request is in flight");
     service.pending(accounts, nil);
     Check(app.snapshot.primary.remainingPercent == 77 && app.historyPoints.count == 1, @"Selected account records its own sample");
+    Check([creditService.creditAccountID isEqual:@"test-main"], @"Coupon query follows the new monitoring choice");
+    QuotaResetCredits *mainCredits = QuotaParseResetCredits(JSON(@{@"available_count": @2}), @"test-main", nil);
+    creditService.pendingCredits(mainCredits, nil);
+    Check(app.resetCredits.availableCount.integerValue == 2 && !app.resetCreditsError, @"Monitored account coupon count is displayed");
+    QuotaSnapshot *currentQuota = app.snapshot;
+    [app refreshResetCredits];
+    creditService.pendingCredits(nil, QuotaError(QuotaErrorProtocol, @"coupon unavailable"));
+    Check(!app.resetCredits && app.resetCreditsError && app.snapshot == currentQuota,
+          @"Coupon failure becomes unknown without breaking quota presentation");
     NSURL *mainFile = app.historyFileURL;
     NSData *mainBefore = [NSData dataWithContentsOfURL:mainFile];
     [app recordSnapshotIfChanged:accounts[1].snapshot];
@@ -126,6 +154,13 @@ static void TestControllerAndHistory(NSURL *directory) {
     service.pending(stale, nil);
     Check(app.lastError && [[NSData dataWithContentsOfURL:mainFile] isEqual:mainBefore], @"Cached refresh does not create a fresh sample");
     [app refresh];
+    NSMutableDictionary *unconfirmedRow = [FixtureRows()[0] mutableCopy];
+    [unconfirmedRow removeObjectForKey:@"quotaRefresh"];
+    unconfirmedRow[@"quota"] = @{@"weeklyPercent": @40};
+    service.pending(QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmedRow]}), nil), nil);
+    Check(app.lastError && [[NSData dataWithContentsOfURL:mainFile] isEqual:mainBefore],
+          @"Changed quota without refresh confirmation cannot be written as a fresh sample");
+    [app refresh];
     service.pending(@[accounts[1]], nil);
     Check(!app.snapshot && !app.historyFileURL && !app.historyPoints.count && [app.selectedAccountID isEqual:@"test-main"],
           @"Removed monitored account clears presentation and retains explicit selection");
@@ -133,6 +168,36 @@ static void TestControllerAndHistory(NSURL *directory) {
           @"Legacy history is never assigned or overwritten");
     [app.timer invalidate];
     [app.preferences removePersistentDomainForName:suite];
+}
+
+static void TestResetCreditsMapping(void) {
+    NSArray *rows = @[
+        @{@"granted_at": @"2020-01-01T00:00:00Z", @"expires_at": @"2099-03-02T10:00:00.000Z"},
+        @{@"granted_at": @"2020-01-01T00:00:00Z", @"expires_at": @"2099-02-01T10:00:00Z"}
+    ];
+    QuotaResetCredits *credits = QuotaParseResetCredits(JSON(@{@"available_count": @2, @"credits": rows}), @"test-pro", nil);
+    Check(credits.availableCount.integerValue == 2 && credits.expiries.count == 2 && [credits.accountID isEqual:@"test-pro"],
+          @"Coupon count and ISO timestamps belong to the requested account");
+    Check([credits.expiries[0] compare:credits.expiries[1]] == NSOrderedAscending, @"Nearest coupon expiry comes first");
+    Check([QuotaResetCreditsText(credits, NO, nil) containsString:@"最近"], @"Multiple coupons show nearest expiry");
+    QuotaResetCredits *listOnly = QuotaParseResetCredits(JSON(@{@"credits": rows}), @"test-main", nil);
+    Check(listOnly.availableCount.integerValue == 2, @"Complete credit list supplies count when summary is absent");
+    QuotaResetCredits *zero = QuotaParseResetCredits(JSON(@{@"available_count": @0, @"credits": @[]}), @"test-main", nil);
+    Check(zero && zero.availableCount.integerValue == 0 && [QuotaResetCreditsText(zero, NO, nil) isEqual:@"重置券 0 张"],
+          @"Confirmed zero is shown distinctly from unavailable data");
+    QuotaResetCredits *countOnly = QuotaParseResetCredits(JSON(@{@"available_count": @3}), @"test-main", nil);
+    Check(countOnly.availableCount.integerValue == 3 && [QuotaResetCreditsText(countOnly, NO, nil) containsString:@"到期时间暂无数据"],
+          @"Known count is preserved without inventing expiry");
+    Check(!QuotaParseResetCredits(JSON(@{}), @"test-main", nil), @"Missing payload cannot become zero coupons");
+    Check(!QuotaParseResetCredits(JSON(@{@"available_count": @YES}), @"test-main", nil), @"Boolean count is rejected");
+    Check(!QuotaParseResetCredits(JSON(@{@"available_count": @(-1)}), @"test-main", nil), @"Negative count is rejected");
+    Check(!QuotaParseResetCredits(JSON(@{@"credits": @[@{@"expires_at": @"invalid"}]}), @"test-main", nil),
+          @"Malformed list cannot imply zero coupons");
+    QuotaResetCredits *expired = QuotaParseResetCredits(JSON(@{@"credits": @[
+        @{@"granted_at": @"2000-01-01T00:00:00Z", @"expires_at": @"2001-01-01T00:00:00Z"}]}), @"test-main", nil);
+    Check(expired.availableCount.integerValue == 0 && !expired.expiries.count, @"Expired coupons are not counted as available");
+    Check([QuotaResetCreditsText(nil, NO, QuotaError(QuotaErrorProtocol, @"failed")) isEqual:@"重置券 暂不可用"],
+          @"Failed lookup is unavailable rather than zero");
 }
 
 static NSURL *MakeExecutable(NSURL *directory, NSString *name, NSString *body) {
@@ -181,6 +246,28 @@ static void TestCLI(NSURL *directory) {
     Check(!callback, @"Cancelled work cannot deliver stale results");
 }
 
+static void TestResetCreditsCLI(NSURL *directory) {
+    NSURL *valid = MakeExecutable(directory, @"mock-reset-ocx",
+        @"[ \"$*\" = 'account reset-credits test-pro --json' ] || exit 17\nprintf '{\"available_count\":2,\"credits\":[]}'\n");
+    OpenCodexQuotaService *service = [[OpenCodexQuotaService alloc] initWithExecutableURL:valid timeout:2];
+    __block BOOL done = NO;
+    [service fetchResetCreditsForAccountID:@"test-pro" completion:^(QuotaResetCredits *credits, NSError *error) {
+        Check(NSThread.isMainThread && !error && credits.availableCount.integerValue == 2 && [credits.accountID isEqual:@"test-pro"],
+              @"Real subprocess uses the exact inspection command, without consume flags");
+        done = YES;
+    }];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while (!done && deadline.timeIntervalSinceNow > 0) [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    Check(done, @"Coupon inspection completes");
+    done = NO;
+    [service fetchResetCreditsForAccountID:@"--consume" completion:^(QuotaResetCredits *credits, NSError *error) {
+        Check(!credits && error.code == QuotaErrorAccountUnavailable, @"Option-shaped account identity cannot become a CLI flag");
+        done = YES;
+    }];
+    [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    Check(done, @"Invalid inspection identity is rejected");
+}
+
 int main(void) {
     @autoreleasepool {
         NSURL *directory = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES]
@@ -188,10 +275,12 @@ int main(void) {
         [NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES
                                                 attributes:@{NSFilePosixPermissions: @0700} error:nil];
         TestMapping();
+        TestResetCreditsMapping();
         TestControllerAndHistory(directory);
         TestCLI(directory);
+        TestResetCreditsCLI(directory);
         [NSFileManager.defaultManager removeItemAtURL:directory error:nil];
-        puts("PASS: OpenCodex mapping, account selection, history isolation, CLI failures, timeout and cancellation");
+        puts("PASS: OpenCodex quota/reset-credit mapping, account selection, late-response isolation, history, observational CLI, failures, timeout and cancellation");
     }
     return 0;
 }

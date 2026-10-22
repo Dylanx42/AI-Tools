@@ -36,14 +36,24 @@ FOUNDATION_EXPORT NSError *QuotaError(QuotaErrorCode code, NSString *description
 @property(nonatomic, strong, nullable) NSError *refreshError;
 @end
 
+@interface QuotaResetCredits : NSObject
+@property(nonatomic, copy) NSString *accountID;
+@property(nonatomic, strong) NSNumber *availableCount;
+@property(nonatomic, copy) NSArray<NSDate *> *expiries;
+@property(nonatomic, strong) NSDate *updatedAt;
+@end
+
 // No credential or full upstream response is retained by these models.
 FOUNDATION_EXPORT NSArray<QuotaAccount *> *_Nullable QuotaParseAccounts(NSData *data, NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT QuotaAccount *_Nullable QuotaSelectedAccount(NSArray<QuotaAccount *> *accounts,
                                                             NSString *_Nullable selectedID);
 FOUNDATION_EXPORT NSString *QuotaHistoryFileName(NSString *accountID);
+FOUNDATION_EXPORT QuotaResetCredits *_Nullable QuotaParseResetCredits(NSData *data, NSString *accountID,
+                                                                      NSError *_Nullable *_Nullable error);
 
 typedef void (^QuotaAccountsCompletion)(NSArray<QuotaAccount *> *_Nullable accounts,
                                         NSError *_Nullable error);
+typedef void (^QuotaResetCreditsCompletion)(QuotaResetCredits *_Nullable credits, NSError *_Nullable error);
 
 @interface OpenCodexQuotaService : NSObject
 - (instancetype)init;
@@ -51,6 +61,7 @@ typedef void (^QuotaAccountsCompletion)(NSArray<QuotaAccount *> *_Nullable accou
 - (instancetype)initWithExecutableURL:(NSURL *_Nullable)executableURL
                              timeout:(NSTimeInterval)timeout;
 - (void)fetch:(QuotaAccountsCompletion)completion;
+- (void)fetchResetCreditsForAccountID:(NSString *)accountID completion:(QuotaResetCreditsCompletion)completion;
 - (void)cancel;
 @end
 

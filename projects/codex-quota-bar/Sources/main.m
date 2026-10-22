@@ -819,20 +819,42 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 }
 @end
 
+static NSString *QuotaResetCreditsText(QuotaResetCredits *credits, BOOL loading, NSError *error) {
+    if (error) return @"重置券 暂不可用";
+    if (!credits) return loading ? @"重置券 正在读取…" : @"重置券 暂无数据";
+    NSString *text = [NSString stringWithFormat:@"重置券 %@ 张", credits.availableCount];
+    if (credits.availableCount.integerValue > 0) {
+        if (credits.expiries.count) {
+            NSDateFormatter *formatter = [NSDateFormatter new];
+            formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+            formatter.dateFormat = @"M/d HH:mm";
+            text = [text stringByAppendingFormat:@" · %@%@ 到期", credits.availableCount.integerValue > 1 ? @"最近 " : @"",
+                    [formatter stringFromDate:credits.expiries.firstObject]];
+        } else {
+            text = [text stringByAppendingString:@" · 到期时间暂无数据"];
+        }
+    }
+    return loading ? [text stringByAppendingString:@" · 正在刷新"] : text;
+}
+
 @interface QuotaDashboardView : NSView
 @property(nonatomic, strong) NSColor *statusColor;
 @property(nonatomic) CGFloat footerY;
 @property(nonatomic) CGFloat planBadgeWidth;
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
-                         loading:(BOOL)loading error:(NSError *)error;
+                         loading:(BOOL)loading error:(NSError *)error
+                    resetCredits:(QuotaResetCredits *)resetCredits creditsLoading:(BOOL)creditsLoading
+                    creditsError:(NSError *)creditsError;
 @end
 
 @implementation QuotaDashboardView
 - (BOOL)isFlipped { return YES; }
 
 - (instancetype)initWithSnapshot:(QuotaSnapshot *)snapshot points:(NSArray<QuotaHistoryPoint *> *)points
-                         loading:(BOOL)loading error:(NSError *)error {
-    self = [super initWithFrame:NSMakeRect(0, 0, 400, 466)];
+                         loading:(BOOL)loading error:(NSError *)error
+                    resetCredits:(QuotaResetCredits *)resetCredits creditsLoading:(BOOL)creditsLoading
+                    creditsError:(NSError *)creditsError {
+    self = [super initWithFrame:NSMakeRect(0, 0, 400, 490)];
     if (!self) return nil;
     QuotaLabel(self, @"OpenCodex", NSMakeRect(22, 18, 180, 22), 16, NSFontWeightSemibold, NSColor.labelColor);
     if (snapshot.planType.length) {
@@ -874,7 +896,21 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                                 trend.secondaryName, secondaryPreviousReset];
     [self addSubview:trend];
 
-    _footerY = 442;
+    NSString *creditsText = QuotaResetCreditsText(resetCredits, creditsLoading, creditsError);
+    NSTextField *creditsLabel = QuotaLabel(self, creditsText, NSMakeRect(22, 440, 356, 16), 11,
+                                           NSFontWeightMedium, creditsError ? NSColor.systemOrangeColor : NSColor.secondaryLabelColor);
+    NSMutableArray<NSString *> *creditTips = [NSMutableArray arrayWithObject:creditsText];
+    NSDateFormatter *creditFormatter = [NSDateFormatter new];
+    creditFormatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    creditFormatter.dateFormat = @"yyyy/M/d HH:mm:ss";
+    for (NSDate *expiry in resetCredits.expiries) [creditTips addObject:[creditFormatter stringFromDate:expiry]];
+    if (resetCredits.availableCount.integerValue > (NSInteger)resetCredits.expiries.count) {
+        [creditTips addObject:@"部分或全部重置券未返回到期时间"];
+    }
+    if (resetCredits.updatedAt) [creditTips addObject:[@"读取于 " stringByAppendingString:[creditFormatter stringFromDate:resetCredits.updatedAt]]];
+    if (creditsError) [creditTips addObject:creditsError.localizedDescription];
+    creditsLabel.toolTip = [creditTips componentsJoinedByString:@"\n"];
+    _footerY = 466;
     NSDateFormatter *updated = [NSDateFormatter new];
     updated.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
     updated.dateFormat = @"HH:mm:ss";
@@ -913,6 +949,11 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 
 @interface AppDelegate : NSObject <NSApplicationDelegate, NSMenuDelegate>
 @property(nonatomic, strong) OpenCodexQuotaService *service;
+@property(nonatomic, strong) OpenCodexQuotaService *resetCreditService;
+@property(nonatomic, strong, nullable) QuotaResetCredits *resetCredits;
+@property(nonatomic, strong, nullable) NSError *resetCreditsError;
+@property(nonatomic) BOOL resetCreditsLoading;
+@property(nonatomic) NSUInteger resetCreditsRequestVersion;
 @property(nonatomic, copy) NSArray<QuotaAccount *> *accounts;
 @property(nonatomic, copy, nullable) NSString *selectedAccountID;
 @property(nonatomic, strong) NSUserDefaults *preferences;
@@ -938,6 +979,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     self = [super init];
     if (self) {
         _service = [OpenCodexQuotaService new];
+        _resetCreditService = [[OpenCodexQuotaService alloc] initWithExecutableURL:nil timeout:15];
         _accounts = @[];
         _preferences = NSUserDefaults.standardUserDefaults;
         _selectedAccountID = [_preferences stringForKey:QuotaSelectedAccountKey];
@@ -970,6 +1012,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [NSNotificationCenter.defaultCenter removeObserver:self];
     [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:self];
     [self.service cancel];
+    [self invalidateResetCredits];
 }
 
 - (void)menuWillOpen:(NSMenu *)menu {
@@ -1027,6 +1070,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
                 [self prepareUsageHistory];
             }
             if (!account) {
+                [self invalidateResetCredits];
                 self.snapshot = nil;
                 self.historyFileURL = nil;
                 [self.historyPoints removeAllObjects];
@@ -1065,6 +1109,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
         }
 
         [self updateStatusDisplay];
+        if (account) [self refreshResetCredits];
         [self rebuildMenu];
         [self scheduleNextRefreshAfter:nextInterval];
     }];
@@ -1076,6 +1121,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     if ([identifier isEqualToString:self.selectedAccountID]) return;
     QuotaAccount *account = QuotaSelectedAccount(self.accounts, identifier);
     if (!account) return;
+    [self invalidateResetCredits];
     self.selectedAccountID = identifier;
     [self.preferences setObject:identifier forKey:QuotaSelectedAccountKey];
     self.snapshot = account.snapshot;
@@ -1085,6 +1131,32 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     self.consecutiveFailures = 0;
     [self prepareUsageHistory];
     [self refresh];
+}
+
+- (void)invalidateResetCredits {
+    self.resetCreditsRequestVersion += 1;
+    [self.resetCreditService cancel];
+    self.resetCredits = nil;
+    self.resetCreditsError = nil;
+    self.resetCreditsLoading = NO;
+}
+
+- (void)refreshResetCredits {
+    if (!self.selectedAccountID.length || self.resetCreditsLoading) return;
+    NSString *accountID = self.selectedAccountID;
+    NSUInteger version = ++self.resetCreditsRequestVersion;
+    self.resetCreditsLoading = YES;
+    self.resetCreditsError = nil;
+    __weak typeof(self) weakSelf = self;
+    [self.resetCreditService fetchResetCreditsForAccountID:accountID completion:^(QuotaResetCredits *credits, NSError *error) {
+        typeof(self) self = weakSelf;
+        if (!self || version != self.resetCreditsRequestVersion || ![accountID isEqualToString:self.selectedAccountID]) return;
+        self.resetCreditsLoading = NO;
+        // Do not present a stale coupon count as a successful read, or accept a mismatched identity.
+        self.resetCredits = !error && [credits.accountID isEqualToString:accountID] ? credits : nil;
+        self.resetCreditsError = error ?: (self.resetCredits ? nil : QuotaError(QuotaErrorProtocol, @"未取得所选账户的重置券信息。"));
+        [self rebuildMenu];
+    }];
 }
 
 - (void)scheduledRefresh:(NSTimer *)timer {
@@ -1379,7 +1451,9 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     NSMenuItem *dashboardItem = [[NSMenuItem alloc] initWithTitle:@"额度概览" action:nil keyEquivalent:@""];
     dashboardItem.view = [[QuotaDashboardView alloc] initWithSnapshot:self.snapshot
                                                              points:self.historyPoints
-                                                            loading:self.loading error:self.lastError];
+                                                            loading:self.loading error:self.lastError
+                                                       resetCredits:self.resetCredits creditsLoading:self.resetCreditsLoading
+                                                       creditsError:self.resetCreditsError];
     [menu addItem:dashboardItem];
 
     [menu addItem:NSMenuItem.separatorItem];

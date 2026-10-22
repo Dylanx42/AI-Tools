@@ -17,6 +17,8 @@ NSError *QuotaError(QuotaErrorCode code, NSString *description) {
 @end
 @implementation QuotaAccount
 @end
+@implementation QuotaResetCredits
+@end
 
 static NSString *QuotaString(id value) {
     return [value isKindOfClass:NSString.class] && [value length] > 0 ? value : nil;
@@ -85,7 +87,7 @@ NSArray<QuotaAccount *> *QuotaParseAccounts(NSData *data, NSError **error) {
         NSString *problem = nil;
         if ([row[@"needsReauth"] isEqual:@YES]) problem = @"该账户需要在 OpenCodex 中重新登录。";
         else if ([row[@"paused"] isEqual:@YES]) problem = @"该账户已在 OpenCodex 中暂停，显示的额度可能是缓存。";
-        else if (status && ![status isEqualToString:@"ok"]) problem = @"OpenCodex 未能取得该账户的新额度；当前可用数值可能是缓存，请在 OpenCodex 中检查。";
+        else if (![status isEqualToString:@"ok"]) problem = @"OpenCodex 未确认该账户额度的新鲜度；当前可用数值可能是缓存，请在 OpenCodex 中检查。";
         else if (!snapshot.primary && !snapshot.secondary) problem = @"OpenCodex 暂未返回该账户的额度窗口。";
         if (problem) account.refreshError = QuotaError(QuotaErrorAccountUnavailable, problem);
         [accounts addObject:account];
@@ -110,13 +112,66 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
     return [name stringByAppendingString:@".csv"];
 }
 
+static NSDate *QuotaISODate(id value) {
+    if (![value isKindOfClass:NSString.class]) return nil;
+    NSISO8601DateFormatter *formatter = [NSISO8601DateFormatter new];
+    formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime | NSISO8601DateFormatWithFractionalSeconds;
+    NSDate *date = [formatter dateFromString:value];
+    if (!date) {
+        formatter.formatOptions = NSISO8601DateFormatWithInternetDateTime;
+        date = [formatter dateFromString:value];
+    }
+    return date;
+}
+
+QuotaResetCredits *QuotaParseResetCredits(NSData *data, NSString *accountID, NSError **error) {
+    id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+    if (![root isKindOfClass:NSDictionary.class] || root[@"error"]) {
+        if (error) *error = QuotaError(QuotaErrorProtocol, @"OpenCodex 未返回可识别的重置券信息。");
+        return nil;
+    }
+    NSNumber *count = QuotaNumber(root[@"available_count"]);
+    BOOL countProvided = root[@"available_count"] != nil;
+    BOOL validCount = count && count.doubleValue >= 0 && count.doubleValue <= NSIntegerMax &&
+        count.doubleValue == floor(count.doubleValue);
+    id rows = root[@"credits"];
+    if ((countProvided && !validCount) || (!countProvided && ![rows isKindOfClass:NSArray.class])) {
+        if (error) *error = QuotaError(QuotaErrorProtocol, @"OpenCodex 重置券数量暂不可用。");
+        return nil;
+    }
+    NSMutableArray<NSDate *> *expiries = [NSMutableArray array];
+    NSDate *now = NSDate.date;
+    BOOL completeList = YES;
+    for (id row in ([rows isKindOfClass:NSArray.class] ? rows : @[])) {
+        if (![row isKindOfClass:NSDictionary.class]) { completeList = NO; continue; }
+        NSDate *expiry = QuotaISODate(row[@"expires_at"]);
+        NSDate *granted = QuotaISODate(row[@"granted_at"]);
+        if (!expiry || (row[@"granted_at"] && !granted)) { completeList = NO; continue; }
+        if ([expiry compare:now] != NSOrderedDescending || (granted && [granted compare:now] == NSOrderedDescending)) continue;
+        [expiries addObject:expiry];
+    }
+    if (!countProvided && !completeList) {
+        if (error) *error = QuotaError(QuotaErrorProtocol, @"OpenCodex 重置券明细不完整，无法确认数量。");
+        return nil;
+    }
+    [expiries sortUsingSelector:@selector(compare:)];
+    QuotaResetCredits *result = [QuotaResetCredits new];
+    result.accountID = accountID;
+    result.availableCount = validCount ? count : @(expiries.count);
+    result.expiries = result.availableCount.integerValue > 0 ? expiries : @[];
+    result.updatedAt = now;
+    return result;
+}
+
+typedef void (^QuotaDataCompletion)(NSData *_Nullable data, NSError *_Nullable error);
+
 @interface OpenCodexQuotaService ()
 @property(nonatomic, strong) dispatch_queue_t queue;
 @property(nonatomic, strong, nullable) NSURL *explicitExecutableURL;
 @property(nonatomic) NSTimeInterval timeout;
 @property(nonatomic, strong, nullable) NSTask *task;
 @property(nonatomic, strong) NSMutableData *output;
-@property(nonatomic, copy, nullable) QuotaAccountsCompletion completion;
+@property(nonatomic, copy, nullable) QuotaDataCompletion completion;
 @property(nonatomic, copy, nullable) dispatch_block_t timeoutBlock;
 @property(nonatomic) BOOL outputClosed;
 @property(nonatomic) BOOL taskExited;
@@ -142,7 +197,9 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
              [NSHomeDirectory() stringByAppendingPathComponent:@".bun/bin"],
              [NSHomeDirectory() stringByAppendingPathComponent:@".volta/bin"],
              [NSHomeDirectory() stringByAppendingPathComponent:@".asdf/shims"],
-             [NSHomeDirectory() stringByAppendingPathComponent:@".local/share/mise/shims"]];
+             [NSHomeDirectory() stringByAppendingPathComponent:@".local/share/mise/shims"],
+             @"/Applications/OpenCodex.app/Contents/MacOS",
+             [NSHomeDirectory() stringByAppendingPathComponent:@"Applications/OpenCodex.app/Contents/MacOS"]];
 }
 
 - (NSURL *)executableURL {
@@ -172,6 +229,27 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
 }
 
 - (void)fetch:(QuotaAccountsCompletion)completion {
+    [self runArguments:@[@"account", @"list", @"openai", @"--quota", @"--refresh", @"--json"]
+            completion:^(NSData *data, NSError *error) {
+        NSArray *accounts = data ? QuotaParseAccounts(data, &error) : nil;
+        completion(accounts, error);
+    }];
+}
+
+- (void)fetchResetCreditsForAccountID:(NSString *)accountID completion:(QuotaResetCreditsCompletion)completion {
+    if (!accountID.length || [accountID hasPrefix:@"-"]) {
+        dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, QuotaError(QuotaErrorAccountUnavailable, @"请先选择有效的监控账户。")); });
+        return;
+    }
+    // No --consume or --yes flags: this is strictly the inspection path.
+    [self runArguments:@[@"account", @"reset-credits", accountID, @"--json"]
+            completion:^(NSData *data, NSError *error) {
+        QuotaResetCredits *credits = data ? QuotaParseResetCredits(data, accountID, &error) : nil;
+        completion(credits, error);
+    }];
+}
+
+- (void)runArguments:(NSArray<NSString *> *)arguments completion:(QuotaDataCompletion)completion {
     dispatch_async(self.queue, ^{
         if (self.completion) {
             dispatch_async(dispatch_get_main_queue(), ^{ completion(nil, QuotaError(QuotaErrorAlreadyRefreshing, @"正在读取 OpenCodex 额度。")); });
@@ -180,7 +258,7 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
         self.completion = completion;
         NSURL *url = [self executableURL];
         if (!url || ![NSFileManager.defaultManager isExecutableFileAtPath:url.path]) {
-            [self finishWithAccounts:nil error:QuotaError(QuotaErrorCLIUnavailable, @"找不到 OpenCodex CLI（ocx）。请安装 OpenCodex，并确认 ocx status 正常。")];
+            [self finishWithData:nil error:QuotaError(QuotaErrorCLIUnavailable, @"找不到 OpenCodex CLI（ocx）。请安装 OpenCodex，并确认 ocx status 正常。")];
             return;
         }
         [self.output setLength:0];
@@ -189,7 +267,7 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
         NSTask *task = [NSTask new];
         NSPipe *pipe = [NSPipe pipe];
         task.executableURL = url;
-        task.arguments = @[@"account", @"list", @"openai", @"--quota", @"--refresh", @"--json"];
+        task.arguments = arguments;
         task.environment = [self environmentForExecutableURL:url];
         task.standardInput = NSFileHandle.fileHandleWithNullDevice;
         task.standardOutput = pipe;
@@ -209,7 +287,7 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
                     handle.readabilityHandler = nil;
                     [self completeIfReady];
                 } else if (self.output.length + data.length > 2 * 1024 * 1024) {
-                    [self finishWithAccounts:nil error:QuotaError(QuotaErrorProtocol, @"OpenCodex 返回的数据过大，已停止本次读取。")];
+                    [self finishWithData:nil error:QuotaError(QuotaErrorProtocol, @"OpenCodex 返回的数据过大，已停止本次读取。")];
                 } else {
                     [self.output appendData:data];
                 }
@@ -224,12 +302,12 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
             });
         };
         if (![task launchAndReturnError:nil]) {
-            [self finishWithAccounts:nil error:QuotaError(QuotaErrorLaunchFailed, @"无法启动 OpenCodex CLI，请确认 ocx --version 可以正常执行。")];
+            [self finishWithData:nil error:QuotaError(QuotaErrorLaunchFailed, @"无法启动 OpenCodex CLI，请确认 ocx --version 可以正常执行。")];
             return;
         }
         self.timeoutBlock = dispatch_block_create(0, ^{
             typeof(self) self = weakSelf;
-            if (self.task == task) [self finishWithAccounts:nil error:QuotaError(QuotaErrorTimedOut, @"OpenCodex 额度读取超时，请确认服务运行正常并稍后刷新。")];
+            if (self.task == task) [self finishWithData:nil error:QuotaError(QuotaErrorTimedOut, @"OpenCodex 查询超时，请确认服务运行正常并稍后刷新。")];
         });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(self.timeout * NSEC_PER_SEC)), self.queue, self.timeoutBlock);
     });
@@ -238,15 +316,13 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
 - (void)completeIfReady {
     if (!self.taskExited || !self.outputClosed) return;
     if (self.task.terminationStatus != 0) {
-        [self finishWithAccounts:nil error:QuotaError(QuotaErrorProtocol, @"OpenCodex 查询失败，请运行 ocx status 和 ocx account list openai --quota --refresh --json 检查服务与登录状态。")];
+        [self finishWithData:nil error:QuotaError(QuotaErrorProtocol, @"OpenCodex 查询失败，请运行 ocx status 和对应的账户查询命令检查服务与登录状态。")];
         return;
     }
-    NSError *error = nil;
-    NSArray *accounts = QuotaParseAccounts(self.output, &error);
-    [self finishWithAccounts:accounts error:error];
+    [self finishWithData:[self.output copy] error:nil];
 }
 
-- (void)finishWithAccounts:(NSArray<QuotaAccount *> *)accounts error:(NSError *)error {
+- (void)finishWithData:(NSData *)data error:(NSError *)error {
     if (self.timeoutBlock) dispatch_block_cancel(self.timeoutBlock);
     self.timeoutBlock = nil;
     NSTask *task = self.task;
@@ -261,12 +337,12 @@ NSString *QuotaHistoryFileName(NSString *accountID) {
         });
     }
     [self.output setLength:0];
-    QuotaAccountsCompletion callback = self.completion;
+    QuotaDataCompletion callback = self.completion;
     self.completion = nil;
-    if (callback && (accounts || error)) dispatch_async(dispatch_get_main_queue(), ^{ callback(accounts, error); });
+    if (callback && (data || error)) dispatch_async(dispatch_get_main_queue(), ^{ callback(data, error); });
 }
 
 - (void)cancel {
-    dispatch_async(self.queue, ^{ [self finishWithAccounts:nil error:nil]; });
+    dispatch_async(self.queue, ^{ [self finishWithData:nil error:nil]; });
 }
 @end
