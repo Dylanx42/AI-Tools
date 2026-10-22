@@ -168,6 +168,8 @@ static void TestCLI(NSURL *directory) {
     AwaitFetch([[OpenCodexQuotaService alloc] initWithExecutableURL:bad timeout:2], NO, QuotaErrorProtocol);
     NSURL *failure = MakeExecutable(directory, @"failed-ocx", @"printf 'private diagnostic' >&2\nexit 1\n");
     AwaitFetch([[OpenCodexQuotaService alloc] initWithExecutableURL:failure timeout:2], NO, QuotaErrorProtocol);
+    NSURL *oversized = MakeExecutable(directory, @"oversized-ocx", @"exec /usr/bin/head -c 2097153 /dev/zero\n");
+    AwaitFetch([[OpenCodexQuotaService alloc] initWithExecutableURL:oversized timeout:2], NO, QuotaErrorProtocol);
     NSURL *slow = MakeExecutable(directory, @"slow-ocx", @"exec /bin/sleep 10\n");
     AwaitFetch([[OpenCodexQuotaService alloc] initWithExecutableURL:slow timeout:0.1], NO, QuotaErrorTimedOut);
     AwaitFetch([[OpenCodexQuotaService alloc] initWithExecutableURL:[directory URLByAppendingPathComponent:@"missing"] timeout:1], NO, QuotaErrorCLIUnavailable);

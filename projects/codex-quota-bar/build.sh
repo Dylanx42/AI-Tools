@@ -14,6 +14,7 @@ mkdir -p "$MODULE_CACHE"
   -fobjc-arc \
   -fmodules \
   -O2 \
+  -arch arm64 -arch x86_64 \
   -mmacosx-version-min=13.0 \
   -fmodules-cache-path="$MODULE_CACHE" \
   -framework Cocoa \

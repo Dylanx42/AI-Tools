@@ -26,9 +26,17 @@ jobs:
       - name: Build
         run: ./build.sh
       - name: Verify bundle
-        run: codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
-      - name: Upload app bundle
+        run: |
+          codesign --verify --deep --strict --verbose=2 "dist/Codex 额度栏.app"
+          lipo -verify_arch arm64 x86_64 "dist/Codex 额度栏.app/Contents/MacOS/CodexQuotaBar"
+      - name: Package and verify installation archive
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent "dist/Codex 额度栏.app" dist/Codex-Quota-Bar.zip
+          ditto -x -k dist/Codex-Quota-Bar.zip .build/package-check
+          test -x ".build/package-check/Codex 额度栏.app/Contents/MacOS/CodexQuotaBar"
+          codesign --verify --deep --strict --verbose=2 ".build/package-check/Codex 额度栏.app"
+      - name: Upload installation archive
         uses: actions/upload-artifact@v4
         with:
           name: codex-quota-bar-macos
-          path: "projects/codex-quota-bar/dist/Codex 额度栏.app"
+          path: projects/codex-quota-bar/dist/Codex-Quota-Bar.zip

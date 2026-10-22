@@ -56,7 +56,7 @@ ditto "dist/Codex 额度栏.app" "/Applications/Codex 额度栏.app"
 open -a "/Applications/Codex 额度栏.app"
 ```
 
-构建使用本机 ad-hoc 签名，无第三方构建依赖。CI 在 macOS 构建和验证；CI 产物不替代 Mac 本地安装与交互验收。当前没有自动更新器或开机自启功能。
+构建生成同时包含 Apple Silicon / Intel 的通用 App，使用 ad-hoc 签名，无第三方构建依赖。CI 在 macOS 构建、验证并打包 `Codex-Quota-Bar.zip`；先用 ditto 封装 App 以保留可执行权限，再验证解包后的签名。下载 Actions 的 `codex-quota-bar-macos` artifact 后，解开外层 artifact，再解开其中的 App ZIP，退出旧应用并将新 App 放入「应用程序」。CI 产物不替代本地安装与交互验收。当前没有自动更新器或开机自启功能。
 
 ## 本地记录与隐私
 
@@ -71,7 +71,7 @@ open -a "/Applications/Codex 额度栏.app"
 
 触发：用户在 OpenCodex 使用多账户，希望独立选择额度栏的监控对象。本机提供的 2.90.0 CLI 输出证明账户列表、选中 ID、短/周窗口可读取；这些查询发生在代码改动之前，不代表新版 App 已安装或验收。
 
-本次开发在 Linux 云端完成；macOS 编译、签名和离线回归由项目 CI 检查。测试使用合成数据和模拟 CLI，不连接真实账户。验证结论随本次 PR / [CHANGELOG.md](CHANGELOG.md) 更新。
+本次开发在 Linux 云端完成。2026-10-23，macOS 14 arm64 的 [CI #43](https://github.com/Dylanx42/AI-Tools/actions/runs/39839349432) 已通过 plist、离线回归、构建和签名检查；测试使用合成数据和模拟 CLI，不连接真实账户。随后补充了通用架构、输出上限与安装归档检查，最终结果记录在 [PR #26](https://github.com/Dylanx42/AI-Tools/pull/26) / [CHANGELOG.md](CHANGELOG.md)。
 
 Mac 本地待验收：
 

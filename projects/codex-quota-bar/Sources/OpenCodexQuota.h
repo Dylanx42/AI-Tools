@@ -36,7 +36,7 @@ FOUNDATION_EXPORT NSError *QuotaError(QuotaErrorCode code, NSString *description
 @property(nonatomic, strong, nullable) NSError *refreshError;
 @end
 
-// No credential, account email or full upstream response is retained by these models.
+// No credential or full upstream response is retained by these models.
 FOUNDATION_EXPORT NSArray<QuotaAccount *> *_Nullable QuotaParseAccounts(NSData *data, NSError *_Nullable *_Nullable error);
 FOUNDATION_EXPORT QuotaAccount *_Nullable QuotaSelectedAccount(NSArray<QuotaAccount *> *accounts,
                                                             NSString *_Nullable selectedID);

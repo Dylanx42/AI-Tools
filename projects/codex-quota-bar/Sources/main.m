@@ -997,6 +997,7 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     button.toolTip = @"正在读取 OpenCodex 额度";
 
     NSMenu *menu = [NSMenu new];
+    menu.autoenablesItems = NO;
     menu.delegate = self;
     self.statusItem.menu = menu;
     [self rebuildMenu];
@@ -1348,7 +1349,8 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
     [menu removeAllItems];
 
     QuotaAccount *selected = QuotaSelectedAccount(self.accounts, self.selectedAccountID);
-    NSString *selection = selected.displayName ?: (self.selectedAccountID.length ? @"账户不可用，请重新选择" : @"正在读取账户…");
+    NSString *selection = selected.displayName ?: (self.selectedAccountID.length ? @"账户不可用，请重新选择" :
+        (self.loading ? @"正在读取账户…" : @"暂无账户"));
     NSMenuItem *accountItem = [[NSMenuItem alloc] initWithTitle:[@"监控账户：" stringByAppendingString:selection]
                                                       action:nil keyEquivalent:@""];
     accountItem.image = [NSImage imageWithSystemSymbolName:@"person.crop.circle" accessibilityDescription:@"监控账户"];
