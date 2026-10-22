@@ -84,11 +84,13 @@ NSArray<QuotaAccount *> *QuotaParseAccounts(NSData *data, NSError **error) {
         account.snapshot = snapshot;
         NSDictionary *refresh = [row[@"quotaRefresh"] isKindOfClass:NSDictionary.class] ? row[@"quotaRefresh"] : @{};
         NSString *status = QuotaString(refresh[@"status"]);
+        snapshot.upstreamRefreshConfirmed = [status isEqualToString:@"ok"];
         NSString *problem = nil;
         if ([row[@"needsReauth"] isEqual:@YES]) problem = @"该账户需要在 OpenCodex 中重新登录。";
         else if ([row[@"paused"] isEqual:@YES]) problem = @"该账户已在 OpenCodex 中暂停，显示的额度可能是缓存。";
-        else if (![status isEqualToString:@"ok"]) problem = @"OpenCodex 未确认该账户额度的新鲜度；当前可用数值可能是缓存，请在 OpenCodex 中检查。";
-        else if (!snapshot.primary && !snapshot.secondary) problem = @"OpenCodex 暂未返回该账户的额度窗口。";
+        else if (status && ![status isEqualToString:@"ok"] && ![status isEqualToString:@"not_reported"]) {
+            problem = @"OpenCodex 本次上游额度查询失败；当前可用数值可能是缓存，请稍后刷新。";
+        } else if (!snapshot.primary && !snapshot.secondary) problem = @"OpenCodex 暂未返回该账户的额度窗口。";
         if (problem) account.refreshError = QuotaError(QuotaErrorAccountUnavailable, problem);
         [accounts addObject:account];
     }

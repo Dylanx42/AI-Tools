@@ -25,6 +25,8 @@ FOUNDATION_EXPORT NSError *QuotaError(QuotaErrorCode code, NSString *description
 @property(nonatomic, strong, nullable) QuotaWindow *primary;
 @property(nonatomic, strong, nullable) QuotaWindow *secondary;
 @property(nonatomic, copy, nullable) NSString *planType;
+// A successful local CLI read does not imply an upstream refresh was confirmed.
+@property(nonatomic) BOOL upstreamRefreshConfirmed;
 @property(nonatomic, strong) NSDate *updatedAt;
 @end
 

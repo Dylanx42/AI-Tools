@@ -819,6 +819,17 @@ static NSTextField *QuotaLabel(NSView *parent, NSString *text, NSRect frame,
 }
 @end
 
+static NSString *QuotaReadStatus(QuotaSnapshot *snapshot, BOOL loading, NSError *error) {
+    if (loading) return @"正在读取额度…";
+    if (error) return snapshot ? @"更新失败 · 当前为上次数据" : @"额度读取失败 · 请尝试刷新";
+    if (!snapshot) return @"等待额度数据";
+    NSDateFormatter *formatter = [NSDateFormatter new];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
+    formatter.dateFormat = @"HH:mm:ss";
+    return [NSString stringWithFormat:@"%@ 读取 · %@", [formatter stringFromDate:snapshot.updatedAt],
+            snapshot.upstreamRefreshConfirmed ? @"来源 OpenCodex" : @"上游状态未提供"];
+}
+
 static NSString *QuotaResetCreditsText(QuotaResetCredits *credits, BOOL loading, NSError *error) {
     if (error) return @"重置券 暂不可用";
     if (!credits) return loading ? @"重置券 正在读取…" : @"重置券 暂无数据";
@@ -911,17 +922,15 @@ static NSString *QuotaResetCreditsText(QuotaResetCredits *credits, BOOL loading,
     if (creditsError) [creditTips addObject:creditsError.localizedDescription];
     creditsLabel.toolTip = [creditTips componentsJoinedByString:@"\n"];
     _footerY = 466;
-    NSDateFormatter *updated = [NSDateFormatter new];
-    updated.locale = [NSLocale localeWithLocaleIdentifier:@"zh_CN"];
-    updated.dateFormat = @"HH:mm:ss";
-    NSString *status = loading ? @"正在更新额度…" : error ? (snapshot ? @"更新失败 · 当前为上次数据" : @"额度读取失败 · 请尝试刷新") :
-        snapshot ? [NSString stringWithFormat:@"%@ 读取 · 来源 OpenCodex", [updated stringFromDate:snapshot.updatedAt]] : @"等待额度数据";
+    NSString *status = QuotaReadStatus(snapshot, loading, error);
     _statusColor = loading ? NSColor.systemBlueColor : error ? NSColor.systemOrangeColor :
-                   snapshot ? NSColor.systemGreenColor : NSColor.tertiaryLabelColor;
+                   snapshot.upstreamRefreshConfirmed ? NSColor.systemGreenColor : NSColor.tertiaryLabelColor;
     NSTextField *statusLabel = QuotaLabel(self, status, NSMakeRect(34, _footerY, 378, 16), 11,
                                          NSFontWeightRegular, NSColor.secondaryLabelColor);
     statusLabel.frame = NSMakeRect(36, _footerY, 342, 16);
-    statusLabel.toolTip = error.localizedDescription ?: status;
+    statusLabel.toolTip = error.localizedDescription ?: (snapshot && !snapshot.upstreamRefreshConfirmed
+        ? @"已读取 OpenCodex 返回的额度，但它未提供上游刷新确认；时间为本次本地读取时间，数值可能来自缓存。未确认值不记作新趋势点。"
+        : status);
     if (error) {
         NSTextField *errorLabel = QuotaLabel(self, error.localizedDescription,
                                             NSMakeRect(22, _footerY + 22, 356, 32), 11,
@@ -1357,7 +1366,7 @@ static NSString *QuotaResetCreditsText(QuotaResetCredits *credits, BOOL loading,
 }
 
 - (void)recordSnapshotIfChanged:(QuotaSnapshot *)snapshot {
-    if (![snapshot.accountID isEqualToString:self.selectedAccountID]) return;
+    if (!snapshot.upstreamRefreshConfirmed || ![snapshot.accountID isEqualToString:self.selectedAccountID]) return;
     if (!self.historyFileURL) [self prepareUsageHistory];
     if (!self.historyFileURL) return;
 
@@ -1479,6 +1488,7 @@ static NSString *QuotaResetCreditsText(QuotaResetCredits *credits, BOOL loading,
     QuotaAccount *selected = QuotaSelectedAccount(self.accounts, self.selectedAccountID);
     NSMutableArray<NSString *> *lines = [NSMutableArray arrayWithObjects:@"OpenCodex 剩余额度",
         selected.displayName ?: @"监控账户不可用", nil];
+    if (!snapshot.upstreamRefreshConfirmed) [lines addObject:@"已读取额度；OpenCodex 未提供上游刷新状态，数值可能来自缓存。"];
     if (snapshot.primary) {
         [lines addObject:[NSString stringWithFormat:@"%@：%ld%%",
                           [self windowNameForMinutes:snapshot.primary.durationMinutes fallback:@"短窗口"],

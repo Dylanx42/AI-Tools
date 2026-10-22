@@ -61,8 +61,18 @@ static void TestMapping(void) {
           @"Expired login is not a successful refresh");
     NSMutableDictionary *unconfirmed = [FixtureRows()[1] mutableCopy];
     [unconfirmed removeObjectForKey:@"quotaRefresh"];
-    Check(QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmed]}), nil).firstObject.refreshError != nil,
-          @"Absent refresh outcome is unconfirmed cache, not a fresh sample");
+    QuotaAccount *readable = QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmed]}), nil).firstObject;
+    Check(!readable.refreshError && !readable.snapshot.upstreamRefreshConfirmed && readable.snapshot.secondary.remainingPercent == 98,
+          @"Absent optional refresh outcome still allows quota display without claiming freshness");
+    Check([QuotaReadStatus(readable.snapshot, NO, nil) containsString:@"上游状态未提供"] &&
+          ![QuotaReadStatus(readable.snapshot, NO, nil) containsString:@"失败"], @"Missing refresh metadata is a neutral reading state");
+    unconfirmed[@"quotaRefresh"] = @{@"status": @"not_reported"};
+    readable = QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmed]}), nil).firstObject;
+    Check(!readable.refreshError && !readable.snapshot.upstreamRefreshConfirmed, @"Explicitly unreported status is also neutral");
+    Check(accounts[0].snapshot.upstreamRefreshConfirmed && !accounts[0].refreshError,
+          @"Explicit ok still confirms upstream freshness");
+    Check([QuotaReadStatus(accounts[0].snapshot, NO, QuotaError(QuotaErrorTimedOut, @"timeout")) containsString:@"失败"],
+          @"Real read failure still has an error presentation");
     NSError *error = nil;
     Check(!QuotaParseAccounts(JSON(@{@"accounts": @[FixtureRows()[0], FixtureRows()[0]]}), &error) && error,
           @"Duplicate account identities reject ambiguous data");
@@ -158,8 +168,17 @@ static void TestControllerAndHistory(NSURL *directory) {
     [unconfirmedRow removeObjectForKey:@"quotaRefresh"];
     unconfirmedRow[@"quota"] = @{@"weeklyPercent": @40};
     service.pending(QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmedRow]}), nil), nil);
-    Check(app.lastError && [[NSData dataWithContentsOfURL:mainFile] isEqual:mainBefore],
-          @"Changed quota without refresh confirmation cannot be written as a fresh sample");
+    Check(!app.lastError && app.consecutiveFailures == 0 && app.lastRefreshCompletedAt &&
+          app.snapshot.secondary.remainingPercent == 60 && !app.snapshot.upstreamRefreshConfirmed,
+          @"Successful CLI read with absent metadata updates display and is not put into failure backoff");
+    Check([[NSData dataWithContentsOfURL:mainFile] isEqual:mainBefore],
+          @"Readable but unconfirmed quota is still not recorded as a fresh sample");
+    unconfirmedRow[@"quotaRefresh"] = @{@"status": @"ok"};
+    [app refresh];
+    service.pending(QuotaParseAccounts(JSON(@{@"accounts": @[unconfirmedRow]}), nil), nil);
+    Check(!app.lastError && app.snapshot.upstreamRefreshConfirmed &&
+          ![[NSData dataWithContentsOfURL:mainFile] isEqual:mainBefore],
+          @"Affirmative refresh resumes history after metadata was previously absent");
     [app refresh];
     service.pending(@[accounts[1]], nil);
     Check(!app.snapshot && !app.historyFileURL && !app.historyPoints.count && [app.selectedAccountID isEqual:@"test-main"],
