@@ -112,6 +112,8 @@ static void TestControllerAndHistory(NSURL *directory) {
     StubQuotaService *creditService = [StubQuotaService new];
     app.service = service;
     app.resetCreditService = creditService;
+    Check([app chartNumber:nil equals:nil] && ![app chartNumber:@1 equals:nil] && ![app chartNumber:nil equals:@1],
+          @"Known-to-missing quota transitions compare safely in both directions");
     NSString *suite = [@"quota-tests." stringByAppendingString:NSUUID.UUID.UUIDString];
     app.preferences = [[NSUserDefaults alloc] initWithSuiteName:suite];
     app.selectedAccountID = nil;

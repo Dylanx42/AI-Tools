@@ -1352,7 +1352,7 @@ static NSString *QuotaResetCreditsText(QuotaResetCredits *credits, BOOL loading,
 }
 
 - (BOOL)chartNumber:(nullable NSNumber *)value equals:(nullable NSNumber *)other {
-    return value == other || [value isEqualToNumber:other];
+    return value == other || [value isEqual:other];
 }
 
 - (NSArray<NSString *> *)historyFieldsForWindow:(nullable QuotaWindow *)window {
