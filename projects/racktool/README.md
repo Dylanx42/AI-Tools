@@ -7,6 +7,7 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 调试和验收；云端接明确分工的审查或独立任务，GitHub 继续保存正式版本。详见
 [本地优先开发规范与接管提示词](docs/development/local-first-workflow.md)。源码开发需要本地 checkout
 和该工作区的独立 .venv；下面的完整 Skill 安装方式用于日常使用/成品验收，包不会随源码自动更新。
+本机接管、源码基线与待验收项见 [2026-10-26 本地接管记录](docs/updates/2026-10-26-local-takeover.md)。
 
 ## 当前使用方式：Skill + AI 对话
 
