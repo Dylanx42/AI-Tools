@@ -16,7 +16,15 @@ from racktool.core.identity import new_entity_id, normalize_path, sha256_file
 from racktool.core.query import unique_device, unique_rack
 from racktool.core.service import commit_write_plan, load_project_state
 from racktool.core.sync import WritePlan, plan_device_add, plan_device_edit
-from racktool.models.project import RackProject
+from racktool.models.project import IdentityConflict, RackProject
+
+
+class ConversationConflictError(ValueError):
+    """A rejected Core plan, retaining machine-readable reasons for clients."""
+
+    def __init__(self, conflicts: tuple[IdentityConflict, ...]) -> None:
+        self.conflicts = conflicts
+        super().__init__("; ".join(f"{item.code}: {item.message}" for item in conflicts))
 
 
 def _json(value: Any) -> bytes:
@@ -127,7 +135,7 @@ def _preview_summary(database: Path, project: RackProject, change: dict[str, Any
     if project.source_workbook:
         plan = _bound_plan(project, change)
         if plan.conflicts:
-            raise ValueError("; ".join(f"{item.code}: {item.message}" for item in plan.conflicts))
+            raise ConversationConflictError(plan.conflicts)
         description["write_plan"] = plan.to_dict()
     else:
         # Exercise exactly the existing draft validator on a disposable state copy.
