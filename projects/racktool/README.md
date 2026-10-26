@@ -3,6 +3,11 @@
 RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最终将以统一的 RackCore
 连接 CLI、桌面界面和可选的 Agent 工作流，同时把结构化机柜数据作为事实层。
 
+开发分工自 2026-10-26 起调整为 **本地主开发、云端协作**：用户本地 Astra 可用时在本机实现、
+调试和验收；云端接明确分工的审查或独立任务，GitHub 继续保存正式版本。详见
+[本地优先开发规范与接管提示词](docs/development/local-first-workflow.md)。源码开发需要本地 checkout
+和该工作区的独立 .venv；下面的完整 Skill 安装方式用于日常使用/成品验收，包不会随源码自动更新。
+
 ## 当前使用方式：Skill + AI 对话
 
 2026-10-14 用户本地验收发现 GUI 排序/缩放控件文字为空，已改以 **RackTool Skill** 为主入口。
@@ -118,9 +123,9 @@ x86-64，Windows ARM 可尝试使用系统的 x64 兼容层，但 ARM 原生 GUI
 
 ## 安装与验证
 
-云端主开发及后续流程规范见 [云端开发与本地交接](docs/development/cloud-workflow.md)。新云端电脑可以从
-项目目录运行 `python scripts/dev.py setup --gui`，然后用
-`python scripts/dev.py check --gui` 完成公开自动化检查和 Qt offscreen 冒烟验证。
+本地/云端协作见 [当前开发规范](docs/development/local-first-workflow.md)，此前迁移过程见
+[历史云端交接记录](docs/development/cloud-workflow.md)。源码开发从项目目录运行
+`python scripts/dev.py setup`，然后 `python scripts/dev.py check`；涉及 GUI 才增加 --gui。
 真实 Golden 数据接入后，增加 `--require-private`；私有样本与人工验收结果不能由公开测试替代。
 
 需要 Python 3.11 或更高版本：

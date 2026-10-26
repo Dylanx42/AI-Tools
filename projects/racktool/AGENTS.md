@@ -197,8 +197,11 @@ GUI / CLI / Skill
 ## 11. 当前关键事实
 
 - 项目目标：开源/公司内部可共享的跨平台 Excel 机柜管理工具。
-- 主开发计划：Codex Cloud + GitHub `AI-Tools/projects/racktool`。
-- 本地设备用于验收：MacBook Air、PD Windows 11 ARM、Lenovo R7000P x86-64。
+- 主开发计划（2026-10-26）：用户本地 Astra 可用期间本地主开发、云端受委派协作，GitHub 保存
+  正式主线与任务分支。执行 [本地优先规范](docs/development/local-first-workflow.md)，替代云端主开发分工。
+- 本地设备用于源码开发及验收：MacBook Air、PD Windows 11 ARM、Lenovo R7000P x86-64；
+  云端不能假定已读取本机未推代码。开发验证使用当前工作区的源码解释器，核对实际导入路径，
+  不把已安装的固定版 Skill 当成会随源码更新。任务交接要有分支/提交、负责人和未完成项。
 - 当前已有一个真实私有机柜 workbook，其中两类实质不同的 Sheet 布局已形成 Sheet-scoped
   expected JSON、源文件 Hash 和持久验收记录；资产清单只作独立对账，不是第二个机柜 Golden。
 - 私有源文件、expected、分析结果和 acceptance 只保留在 Git 忽略的 `samples/private/`，不得提交
