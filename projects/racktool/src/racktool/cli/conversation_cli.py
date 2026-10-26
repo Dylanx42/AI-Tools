@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from racktool.core.conversation import apply_conversation_edit, preview_conversation_edit
+from racktool.core.conversation import (
+    ConversationConflictError,
+    apply_conversation_edit,
+    preview_conversation_edit,
+)
 from racktool.core.query import query_project
 from racktool.core.service import load_project_state
 
@@ -45,6 +49,11 @@ def handle_conversation_cli(args: argparse.Namespace) -> int:
             result = preview_conversation_edit(args.database, _request(args.request), args.plan)
         else:
             result = apply_conversation_edit(args.database, args.plan, args.token, commit=args.commit)
+    except ConversationConflictError as error:
+        print(json.dumps({"status": "rejected", "message": str(error),
+                          "conflicts": [item.to_dict() for item in error.conflicts]},
+                         ensure_ascii=False, indent=2, sort_keys=True))
+        return 2
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
         print(json.dumps({"status": "rejected", "message": str(error)}, ensure_ascii=False, sort_keys=True))
         return 2

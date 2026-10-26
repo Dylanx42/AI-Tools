@@ -78,10 +78,21 @@ python scripts/run.py conversation apply project.sqlite plan.json --token TOKEN 
 text、target 与 start_u/end_u。绑定项目 scope 只能是 working-copy 或 original-authorized；
 原图覆盖必须确有授权，不能仅靠填写 scope 创造授权。未绑定草稿使用 draft。
 
+绑定项目只改文字时，无论省略目标位置，还是显式填写原机柜和相同 U 范围（端点顺序不限），
+Core 都按 `rename` 规划；`sync edit` 和位置表回导复用同一规则，结果与 `sync rename` 一致。
+文字也相同则没有写入动作。纯改名仍检查作用范围内的批注、超链接、数据验证、定义名称等；
+位置/高度变化继续检查不支持的工作簿对象，不能把保护拒绝解释成可强制写入。
+
 preview 返回 `status: previewed`、summary、plan 和 token；在对话里解释 before/after。
 只要求预览时停止；已明确授权的工作副本变更无需重复许可，apply 使用同一计划及 token。
 不要用 sync 的另一组参数替代经过审阅的计划。计划请求/摘要被改、数据库或源变化、token 不符、
 重复提交时拒绝；需从当前项目重新预览。成功结果给出 backup_path、新的 Hash 和新设备 ID。
+Core 预检拒绝返回 `status: rejected`、`message` 和结构化 `conflicts`，退出码为 2；每项保留
+`code`、`severity`、`message`、`entity_ids`、`candidate_refs`、`evidence`。依据 evidence 中
+的单元格、范围或 OOXML 部件解释具体原因；未提供的定位信息不猜测。请求/token/文件错误
+继续返回 status/message，不保证有 conflicts。预检失败不会创建计划或首次密钥。
+升级 Core 后，旧计划若仍记录通用 `edit` 而实际规划为 `rename`，apply 会拒绝摘要变化；
+从当前项目重新预览，不能修改旧计划、签名或改走另一组参数强行提交。
 成功后的标记、Hash 报告或锁清理失败会保持 applied，并返回 warnings；不要重复执行编辑，先 query
 核对当前状态。锁未清理时确认无写入任务后再处理报告中的锁路径。
 预览不改业务 SQLite/XLSX，但会创建新计划和 SQLite 旁密钥；这些私有状态不入 Git，密钥不输出、不发给模型。

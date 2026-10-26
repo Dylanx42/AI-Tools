@@ -570,7 +570,7 @@ def _extended_edit_metadata_conflicts(source: Path, action: WriteAction) -> list
                     unsupported.append(name + ":unsupported-extension-or-rich-text")
         if unsupported:
             return [_conflict("unsupported-workbook-object",
-                "Resizing/cross-Sheet edits cannot safely preserve these workbook objects",
+                "Location/height edits cannot safely preserve these workbook objects",
                 entity_ids=[action.device_id], evidence=sorted(unsupported))]
     workbook = load_workbook(source, read_only=False, data_only=False)
     conflicts: list[IdentityConflict] = []
@@ -812,6 +812,15 @@ def plan_device_edit(
     display_text: str | None = None, workbook_path: Path | None = None,
 ) -> WritePlan:
     """Explicitly change height/location/text, keeping stable device identity."""
+    placements = _active_placements(project, device_id)
+    if display_text is not None and len(placements) == 1:
+        placement = placements[0]
+        if (placement.rack_id == rack_id
+                and min(placement.start_u, placement.end_u) == min(start_u, end_u)
+                and max(placement.start_u, placement.end_u) == max(start_u, end_u)):
+            # A text-only edit has the same preflight and action through every
+            # caller, including conversation and position-table batch edits.
+            return plan_device_rename(project, device_id, display_text, workbook_path=workbook_path)
     return _plan_device_change(project, device_id, rack_id, start_u, end_u,
                                workbook_path=workbook_path, allow_resize=True,
                                display_text=display_text)

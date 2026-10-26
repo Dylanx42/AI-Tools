@@ -8,6 +8,8 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 [本地优先开发规范与接管提示词](docs/development/local-first-workflow.md)。源码开发需要本地 checkout
 和该工作区的独立 .venv；下面的完整 Skill 安装方式用于日常使用/成品验收，包不会随源码自动更新。
 本机接管、源码基线与待验收项见 [2026-10-26 本地接管记录](docs/updates/2026-10-26-local-takeover.md)。
+纯改名入口统一与结构化拒绝信息见 [2026-10-26 修复记录](docs/updates/2026-10-26-rename-consistency.md)；
+该记录的合成回归不代替真实图和 Excel/WPS 验收。
 
 ## 当前使用方式：Skill + AI 对话
 
