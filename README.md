@@ -56,9 +56,9 @@
 3. **验证与落库**：完成相应检查，把问题、修复行为、验证结果和未完成项写回项目文档。用户不用重复整理 Git 操作。
 4. **交付与归档**：按授权合并 PR、确认 `main` 已更新；代码和重要资料保存后归档已完成会话。后续新问题从当前仓库开始，通常无需回看旧会话。
 
-RackTool 日常在云端开发，保留一个总控入口；桌面与 Excel/WPS 在本地验收。
-具体启动、检查、私有数据交接、会话管理和下一阶段顺序见
-[RackTool 云端开发流程规范](projects/racktool/docs/development/cloud-workflow.md)。
+RackTool 自 2026-10-26 起采用本地主开发、云端协作；本地 Astra 可用期间由本机 Agent 主导实现与验收，
+云端接明确分工的任务。源码环境、固定版 Skill、GitHub 同步和交接方式见
+[RackTool 本地优先开发规范](projects/racktool/docs/development/local-first-workflow.md)。
 额度栏和 WF610 是个人维护工具，有新问题时直接按对应 README 开始任务。
 它们的 Mac 编译、安装和实机操作仍需本地环境；源码在 GitHub 不等于已安装 App 或运行配置自动更新。
 
