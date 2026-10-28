@@ -10,6 +10,8 @@ RackTool 是一个跨平台、离线优先的 Excel 机柜管理工具。它最�
 本机接管、源码基线与待验收项见 [2026-10-26 本地接管记录](docs/updates/2026-10-26-local-takeover.md)。
 纯改名入口统一与结构化拒绝信息见 [2026-10-26 修复记录](docs/updates/2026-10-26-rename-consistency.md)；
 该记录的合成回归不代替真实图和 Excel/WPS 验收。
+包含该修复的独立包版本为 `2026.10.28.1`；发布来源、验证范围与更新边界见
+[2026-10-28 Skill 发布记录](docs/updates/2026-10-28-skill-release.md)。安装继续使用正式 Release 完整包。
 
 ## 当前使用方式：Skill + AI 对话
 
