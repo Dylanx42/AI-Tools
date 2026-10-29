@@ -16,5 +16,11 @@
 12. `ADR-012-draft-project-editing.md` — 未绑定 Excel 的新建项目编辑与稳定身份
 13. `ADR-013-safe-device-add-rename.md` — 已绑定 Excel 的设备新增/文字编辑使用 Safe Sync 事务
 14. `ADR-014-skill-room-export.md` — Skill 主入口、机房分 Sheet、U 方向与原版面导出
+15. `ADR-015-portable-skill.md` — 包含 Core/依赖的完整 Skill、正式发布与三层验收
+16. `ADR-016-skill-workflows-and-table-roundtrip.md` — 对话、布局适配、同工作簿跨 Sheet/改高与位置表回导
+
+ADR-016 扩展 ADR-013/015 初版的编辑边界，不能继续将其当时的“不支持跨 Sheet/改高”
+作为现行限制；明确范围见[当前支持说明](../../README.md#已绑定工作簿的移动与编辑范围)。
+开发职责以[本地优先规范](../development/local-first-workflow.md)为准，历史云端背景不改变该分工。
 
 架构方向发生变化时，应新增 ADR 或明确 supersede 旧 ADR。

@@ -17,7 +17,8 @@
   --commit，验证计划完整性和当前状态后调用同一 Core 写入器。数据库旁的本地 HMAC 密钥、
   已消费标记和短期锁属于项目私有状态，更新技能时留存；它是误改保护，不隔离能读取本地密钥的人。
   working-copy/original-authorized 是调用者的授权声明，不能凭填字段创造覆盖原图的许可。
-- 原 move 继续保留高度，新 sync edit 显式修改高度/文字/位置；允许跨机房 Sheet 移动并保留
+- 原 move 继续保留高度且支持跨 Sheet，新 sync edit 显式修改高度/文字/位置；范围限于同一
+  SQLite 项目绑定的同一 XLSX 内、已唯一识别的机柜，不提供跨工作簿/跨项目迁移。允许跨机房 Sheet 移动并保留
   device_id，分别清理旧 Sheet 与写入目标 Sheet，按目标独立 U 轴映射。保留设备列数和 lane 偏移；
   目标过窄拒绝，不修改整柜行高列宽。不支持互相占用源区域的批量换位；整批冲突即拒绝。
 - 2026-10-26 澄清：绑定 edit 的目标机柜及占用 U 范围未变、仅提供文字时，统一复用 ADR-013
@@ -49,7 +50,11 @@
 新增未知布局的明确坐标、低置信停止、Hash 过期；跨房/改高的样式/合并/文本/身份/失败回滚；
 位置表乱序、冲突/篡改/过期及原版面空 definedNames 节点均有回归。
 
-尝试真实 Codex CLI 时，启动必须创建 /run/codex-environment/codex-home/installation_id，
+2026-10-15 在云端尝试真实 Codex CLI 时，启动必须创建 /run/codex-environment/codex-home/installation_id，
 受云端只读挂载阻塞（EROFS），尚未进入模型/技能加载。没有读取凭证或修改 HOME/CODEX_HOME。
 脚本对话协议通过不计为实际 Agent 软件兼容通过；Mac Codex、WorkBuddy、TRAE 与 Excel/WPS
 本机验收继续分别记录，不能由合成夹具或系统 CI 替代。
+
+2026-10-30 已完成本机 Codex 明确调用正式 Skill 及独立新会话恢复的合成验收，见
+[实际验收记录](../updates/2026-10-30-agent-recovery-acceptance.md)。该证据不覆盖真实图、
+Windows 实机、Excel/WPS、其他 Agent 或自动发现机制；上述云端启动失败保留为历史记录。

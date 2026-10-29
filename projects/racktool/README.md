@@ -252,9 +252,28 @@ racktool export new-project.sqlite new-project.xlsx
 本入口只支持未绑定 Excel 的新建项目，不修改已有业务 XLSX；GUI 新建/编辑后续接入。
 完整参数和多行文字示例见 [新建项目编辑规范](docs/development/draft-projects.md)。
 
+## 已绑定工作簿的移动与编辑范围
+
+支持在**同一 SQLite 项目绑定的同一个 XLSX 内**，将设备移动到项目已识别的另一机房 Sheet。
+源、目标机柜都必须有明确的设备区和 U 映射；按目标机柜自身的升序/降序 U 轴写入，保留稳定身份。
+
+| 入口 | 支持范围 |
+| --- | --- |
+| `sync move` | 同 Sheet 或跨 Sheet 移动，保持原 U 高度 |
+| `sync edit`、对话 `edit` | 同 Sheet 或跨 Sheet 移动，可显式改高、改名；仅改文字时统一生成 rename 计划 |
+| `position-table preview/apply` | 新导出位置表可修改机房、机柜、U 范围、高度和名称；绑定项目沿用同一 Safe Sync 保护 |
+
+跨 Sheet 支持不等于任意工作簿都能写入：目标占用、越界、设备区宽度或相对列位置不兼容、
+作用范围内受保护元数据，以及无法安全保留的工作簿对象仍会拒绝。跨 Sheet/改高时不自动修改
+整柜行高列宽，不支持互占源区域的批量换位。操作前预览，提交时重新核对源 Hash 与项目状态。
+不同 Profile 的异构 Sheet 暂分别建项目，不能用跨 Sheet 移动代替跨项目迁移。
+完整设计与保护条件见 [ADR-016](docs/decisions/ADR-016-skill-workflows-and-table-roundtrip.md)。
+
 ## 明确不支持
 
-当前不包含资产表对账、Agent/云 API、Shape/SmartArt、VBA、Office COM，或跨 Sheet 设备移动。
+当前不包含跨 XLSX/跨独立 SQLite 项目的设备迁移、资产表对账、内嵌 Agent/云 API、
+Shape/SmartArt 解析编辑、VBA 或 Office COM。外部 Agent 通过 Skill 调用 CLI 已支持，
+不表示 RackCore 或 GUI 内嵌模型服务。
 
 ## 批量布局与编辑回归
 

@@ -1,8 +1,16 @@
 # RackTool 本地验收规范
 
 从 2026-10-14 起，验收对象改为“固定版本独立 Skill 包 + Agent 对话 + Excel/WPS 输出”。
-无需拉取整个 GitHub 仓库，不再要求 GUI 排序、缩放或窗口操作通过。云端仍负责 Core 开发、
-全套回归和代码记录；本地负责实际 Agent 调用和 Excel/WPS 人工验收。
+普通安装和成品验收无需拉取整个 GitHub 仓库，不再要求 GUI 排序、缩放或窗口操作通过。
+开发分工自 2026-10-26 起为**本地主开发、云端协作**：本地负责源码实现、调试、回归和实际 Agent
+调用；云端只接明确委派的任务；GitHub Actions 执行跨平台检查和正式包构建。Excel/WPS 人工
+验收按用户授权在实际机器进行。源码开发仍需要 checkout 和独立 .venv，不能用固定版 Skill
+代替验证新代码。详见[本地优先规范](https://github.com/Dylanx42/AI-Tools/blob/main/projects/racktool/docs/development/local-first-workflow.md)。
+
+2026-10-30 状态：本机 Codex 明确调用 `2026.10.28.1` 和独立新会话恢复的**合成验收通过**，
+见[验收记录](https://github.com/Dylanx42/AI-Tools/blob/main/projects/racktool/docs/updates/2026-10-30-agent-recovery-acceptance.md)。
+真实图、Windows 实机和 Excel/WPS 继续暂缓；其他 Agent、自动发现和真实格式兼容性不在该结论内。
+下列内容是完整验收规范，不表示要求本轮恢复暂缓项目；合成结果也不能将第三层标记为 PASS。
 
 ## 工作目录和证据
 
@@ -70,11 +78,13 @@ site-packages。若 Agent 限制执行脚本，记录阻塞，不把“能读 SK
 
 文件能被 Core 重开只构成自动化验证，不能代替这一步。
 
-## 不用全量同步的日常流程
+## 成品使用与源码开发的更新流程
 
-云端修复 → GitHub PR/文档/回归 → GitHub Release 成品 Skill ZIP → 本地更新 Skill → 按变更范围验收 →
+本地主导修复（云端按委派协作）→ GitHub PR/文档/回归 → GitHub Actions 发布正式 Skill ZIP →
+本机从 Release 更新 Skill → 按变更范围验收 →
 反馈包版本、Agent/系统、复现请求和输出问题。查历史优先读仓库当前记录；仅缺少证据才回看旧会话。
-本地只有需要修改源码、调试或贡献 PR 时才 clone/pull。已安装 Skill 是固定版本，不会跟着 main 自动更新。
+日常使用者无需同步源码；承担源码开发的本地 Agent 需从最新主线准备独立工作区。
+已安装 Skill 是固定版本，不会跟着 main 或仓库文档自动更新。
 
 普通本地安装不执行源码构建；无法下载完整发布包时记录安装阻塞，不用现场构建掩盖分发失败。
 
@@ -84,7 +94,9 @@ site-packages。若 Agent 限制执行脚本，记录阻塞，不把“能读 SK
   重启会话继续 query。错 token、改过的计划、过期项目/源及重放都应拒绝。
 - 布局：inspect → 核对 Sheet/方向/候选 → propose → check → 按报告 SHA 导入；
   低置信停在 review，不能强制猜。不同 Profile 的机房暂分别建项目。
-- 绑定编辑：同机房与跨机房各做一次改高/移动，核对多行文字、U 映射、合并/样式和稳定身份。
+- 绑定编辑：在同一项目绑定的同一工作簿内，同机房与跨机房各做一次改高/移动，核对多行文字、
+  U 映射、合并/样式和稳定身份。普通 move 保持高度；改高使用 edit。占用、越界、目标过窄和
+  不能安全保留的对象必须拒绝，不要求受保护样本强行移动；不测试跨工作簿/跨项目迁移。
 - 表格回导：从当前项目重新导出，B设备/C机柜/D U位/E高度/F机房可编辑；范围与高度一致。
   使用整张表排序、保留 H/I 隐藏 ID 和隐藏名字元数据，再 preview/apply。检查整批变化和备份。
   旧导出、删/增行、改状态、改隐藏 ID、重复 ID、公式、旧 token 均须拒绝。

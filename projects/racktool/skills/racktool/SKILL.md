@@ -58,7 +58,8 @@ projects/racktool/pyproject.toml，使用项目环境的 python -m racktool；�
 - 遇到低置信度或冲突，报告具体机房/机柜和问题；不忽略错误强行写入，不靠改 expected 凑通过。
 - 原版面导出要求源 Hash 与项目一致；失败就解释原因并重新扫描，不静默降级标准版面。
   有未同步编辑时先按已有授权处理，或明确报告仅导出已保存状态。
-- 已绑定 Excel 的新增仍使用 Safe Sync；`edit` 支持改名、改 U 高度和跨机房移动，保留稳定身份。
+- 已绑定 Excel 的新增仍使用 Safe Sync；`edit` 支持改名、改 U 高度和同一项目绑定的同一工作簿内
+  跨机房 Sheet 移动，保留稳定身份。`sync move` 也可跨 Sheet，但保持原高度；不跨 XLSX/跨项目。
   目标越界、占用、受保护元数据或布局不兼容时拒绝，不因已经授权而跳过校验。
   草稿使用 draft 范围和既有草稿编辑 API；不得清空绑定或混用草稿命令绕过 Safe Sync。
 - 查询返回的是 SQLite 保存状态，外部修改 Excel 后先 rescan；新会话读取同一 SQLite，
