@@ -131,6 +131,9 @@ x86-64，Windows ARM 可尝试使用系统的 x64 兼容层，但 ARM 原生 GUI
 
 ## 安装与验证
 
+从[功能验证入口与证据表](docs/gates/feature-verification.md)选择源码或独立包入口，按用户路径查找
+现有检查、完整流程命令和待验收边界。脚本通过、实际 Agent 调用和 Excel/WPS 验收分别记录。
+
 本地/云端协作见 [当前开发规范](docs/development/local-first-workflow.md)，此前迁移过程见
 [历史云端交接记录](docs/development/cloud-workflow.md)。源码开发从项目目录运行
 `python scripts/dev.py setup`，然后 `python scripts/dev.py check`；涉及 GUI 才增加 --gui。
