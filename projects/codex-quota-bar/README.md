@@ -41,6 +41,9 @@ OpenCodex CLI 负责定位正在运行的服务、管理接口认证、账户凭
 
 ## 构建和安装更新
 
+验证从[功能验证入口与证据表](docs/verification/README.md)开始：按用户功能查找现有测试、离线完整流程、
+构建与解包命令，以及真实账户和桌面交互尚需验收的部分。最近一次实跑见[2026-10-31 记录](docs/verification/2026-10-31-entry.md)。
+
 源码以 `main` 为准，维护记录见 [CHANGELOG.md](CHANGELOG.md)。安装包见 [codex-quota-bar Actions](https://github.com/Dylanx42/AI-Tools/actions/workflows/codex-quota-bar.yml) 中对应版本的成功构建；下载 artifact 需登录 GitHub。临时签名下载链接会过期，过期后从该次构建页面重新下载。
 
 在本项目目录运行：
