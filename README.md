@@ -8,6 +8,7 @@
 
 | 项目 | 类型 | 做什么 |
 | --- | --- | --- |
+| [mac-ip-switcher](./projects/mac-ip-switcher/) | macOS 菜单栏 | 快捷切换网卡 IPv4 和 DHCP |
 | [codex-quota-bar](./projects/codex-quota-bar/) | macOS 菜单栏 | 看 Codex 额度还剩多少 |
 | [deepseek-harness-radar](./projects/deepseek-harness-radar/) | 观察笔记 | 跟踪 DeepSeek Harness 官方和插件生态 |
 | [racktool](./projects/racktool/) | Excel 工具 | 机柜表读取、核对和本地驾驶舱 |
@@ -22,6 +23,7 @@
 ├── .gitignore
 ├── .github/workflows/     # 只在对应项目改动时跑的检查
 └── projects/
+    ├── mac-ip-switcher/
     ├── codex-quota-bar/
     ├── deepseek-harness-radar/
     ├── racktool/
