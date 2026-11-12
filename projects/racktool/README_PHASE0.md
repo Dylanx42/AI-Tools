@@ -2,12 +2,13 @@
 
 本目录是 RackTool 开工前置文档包。
 
-> 历史说明：本文件记录 Phase 0 启动流程，不代表当前项目状态。当前入口与验收状态见
-> `README.md` 和 `docs/gates/V0.5-integrated-audit.md`。
+> 历史说明：本文件记录 Phase 0 启动流程，不代表当前项目状态。当前入口见
+> [README](README.md)，开发分工见[本地主开发、云端协作规范](docs/development/local-first-workflow.md)。
+> 旧阶段门禁不代表当前实机验收通过。
 
 ## Phase 0 当时推荐使用流程
 
-本包现在按“**本地 Codex 先落库 → GitHub 远端仓库 → Codex Cloud 正式开发**”的方式使用：
+本包当时按“**本地 Codex 先落库 → GitHub 远端仓库 → Codex Cloud 正式开发**”的方式使用：
 
 1. 把整个 `RackTool-Phase0-Docs.zip` 交给本地 Codex。
 2. 让本地 Codex 按 `docs/research/codex-local-bootstrap-prompt.md` 执行：

@@ -105,7 +105,8 @@ TRAE CLI 的目录另有规则，不要把 IDE 的路径当成 CLI 的路径。
 
 ## 开发者发布流程（普通安装禁止使用）
 
-开发者在云端/GitHub 构建。普通用户与负责安装的 Agent 不采用这一流程。
+本地开发者负责源码、文档和发布准备，云端按明确委派协作；正式包由 GitHub Actions 构建。
+普通用户与负责安装的 Agent 只下载正式包，不采用源码构建流程。
 更新本文件的版本/链接，通过 PR 合入 main，确认当前提交通过检查后，创建新的不可变标签
 `racktool-skill-vYYYY.MM.DD.N` 并推送。专用 RackTool Skill release 工作流会构建完整包，
 在没有 site-packages 的隔离环境核验后，发布 ZIP、SHA256 与安装/验收文档。

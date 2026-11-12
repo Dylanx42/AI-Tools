@@ -1,5 +1,9 @@
 # RackTool 背景调研与方案形成记录
 
+> 本文保留 Phase 0 调研和当时的分工/工期方案。2026-10-26 起的实际分工以
+> [本地主开发、云端协作规范](../development/local-first-workflow.md)为准；当前能力与验收状态见
+> [项目 README](../../README.md)。旧方案中的云端主开发及“后续”CI 不能作为当前操作指令。
+
 ## 1. 调研起点
 
 项目源于一个实际 IDC 机柜规划维护问题：
@@ -283,7 +287,7 @@ Agent → profile_customer_a.yaml
 - pytest：测试；
 - YAML：Profile；
 - GitHub：代码与版本管理；
-- Codex Cloud：主要开发执行环境。
+- Codex Cloud：当时计划的主要开发执行环境（历史分工）。
 
 原则：
 
@@ -342,11 +346,11 @@ Validate
 - Parallels Desktop Windows 11 ARM VM；
 - Lenovo R7000P 2021 / RTX 3060，x86-64 Windows 笔记本。
 
-最终分工：
+当时形成的分工（历史方案）：
 
 | 环境 | 作用 |
 |---|---|
-| Codex Cloud | 主开发执行环境 |
+| Codex Cloud | 当时计划的主开发执行环境（历史） |
 | GitHub `AI-Tools/projects/racktool` | 唯一代码事实来源 |
 | MacBook Air | macOS 实机验收、必要时本地开发 |
 | PD Win11 ARM | 快速 Windows 兼容性检查 |

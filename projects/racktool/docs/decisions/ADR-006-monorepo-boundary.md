@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-08
 
+2026-10-26 起开发分工改为[本地主开发、云端协作](../development/local-first-workflow.md)。
+下述 monorepo 边界对两端任务都适用；Context 中的云端开发计划属于当时背景。
+
 ## Context
 
 用户计划将 RackTool 放在远端 `AI-Tools` 主仓库中，通过 Codex Cloud 开发。
@@ -19,7 +22,7 @@ AI-Tools/
 
 RackTool 不再单独 `git init`。
 
-Codex Cloud 任务默认：
+本地与受委派的云端 Agent 任务默认：
 
 - 只工作在 `/projects/racktool`；
 - 不修改兄弟项目；
