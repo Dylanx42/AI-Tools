@@ -1,6 +1,7 @@
 import AppKit
 import SystemConfiguration
 import Darwin
+import Carbon
 
 struct Service {
     let id: String
@@ -60,6 +61,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var status: NSStatusItem!
     var presets: [Preset] = []
     let defaultsKey = "savedIPv4Presets"
+    let visibilityKey = "visibleNetworkServices"
+    let shortcutKey = "globalShortcutChoice"
+    var hotKey: EventHotKeyRef?
+    var hotKeyHandler: EventHandlerRef?
+    var hotKeyAvailable = false
+    let shortcuts: [(String, UInt32)] = [("⌃⌥⌘ I", UInt32(kVK_ANSI_I)), ("⌃⌥⌘ J", UInt32(kVK_ANSI_J)), ("⌃⌥⌘ K", UInt32(kVK_ANSI_K))]
+
+    func preferred(_ service: Service) -> Bool {
+        if let ids = UserDefaults.standard.stringArray(forKey: visibilityKey) { return ids.contains(service.id) }
+        return service.name == "Wi-Fi" || service.name == "USB 10/100/1000 LAN"
+    }
+    var shortcutChoice: Int {
+        UserDefaults.standard.object(forKey: shortcutKey) == nil ? 0 : UserDefaults.standard.integer(forKey: shortcutKey)
+    }
+    func installHotKey(_ choice: Int) -> Bool {
+        guard shortcuts.indices.contains(choice) else { return choice == -1 }
+        var ref: EventHotKeyRef?
+        let id = EventHotKeyID(signature: OSType(0x49505357), id: 1)
+        let modifiers = UInt32(controlKey | optionKey | cmdKey)
+        let result = RegisterEventHotKey(shortcuts[choice].1, modifiers, id, GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &ref)
+        guard result == noErr, let ref = ref else { return false }
+        hotKey = ref
+        return true
+    }
+    func configureHotKey() {
+        var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
+            guard let event = event, let context = context else { return OSStatus(eventNotHandledErr) }
+            var id = EventHotKeyID()
+            guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &id) == noErr,
+                  id.signature == OSType(0x49505357), id.id == 1 else { return OSStatus(eventNotHandledErr) }
+            let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
+            DispatchQueue.main.async { delegate.status.button?.performClick(nil) }
+            return noErr
+        }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), &hotKeyHandler)
+        hotKeyAvailable = installHotKey(shortcutChoice)
+    }
+    @objc func chooseShortcut(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? Int, choice != shortcutChoice || !hotKeyAvailable else { return }
+        let old = shortcutChoice
+        if let ref = hotKey { UnregisterEventHotKey(ref); hotKey = nil }
+        if installHotKey(choice) {
+            UserDefaults.standard.set(choice, forKey: shortcutKey)
+            hotKeyAvailable = true
+        } else {
+            hotKeyAvailable = installHotKey(old)
+            message("快捷键不可用", "该组合已被系统或其他程序占用，请选择其他组合。原设置保持不变。")
+        }
+    }
+    @objc func toggleService(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let all = services()
+        var ids = Set(UserDefaults.standard.stringArray(forKey: visibilityKey) ?? all.filter { preferred($0) }.map { $0.id })
+        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
+        UserDefaults.standard.set(Array(ids), forKey: visibilityKey)
+    }
+
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let data = UserDefaults.standard.data(forKey: defaultsKey), let saved = try? JSONDecoder().decode([Preset].self, from: data) { presets = saved }
@@ -69,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         status.menu = menu
+        configureHotKey()
     }
     func savePresets() {
         if let data = try? JSONEncoder().encode(presets) { UserDefaults.standard.set(data, forKey: defaultsKey) }
@@ -86,8 +145,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         heading.isEnabled = false
         menu.addItem(heading)
         if list.isEmpty { let empty = item("未找到当前网络位置中的网卡"); empty.isEnabled = false; menu.addItem(empty) }
+        let visible = list.filter { preferred($0) }
+        let hidden = list.filter { !preferred($0) }
+        if visible.isEmpty && !list.isEmpty {
+            let empty = item("没有已显示的网卡，请在显示设置中选择")
+            empty.isEnabled = false; menu.addItem(empty)
+        }
+        for service in visible { menu.addItem(serviceItem(service)) }
+        if !hidden.isEmpty {
+            let other = item("其他网卡（\(hidden.count)）")
+            let sub = NSMenu()
+            for service in hidden { sub.addItem(serviceItem(service)) }
+            other.submenu = sub; menu.addItem(other)
+        }
+        menu.addItem(.separator())
+        let visibility = item("选择显示的网卡")
+        let visibilityMenu = NSMenu()
         for service in list {
-            let root = item("\(service.name)  ·  \(service.device)\(service.enabled ? "" : "（已停用）")")
+            let entry = item("\(service.name)  ·  \(service.device)", #selector(toggleService(_:)), service.id)
+            entry.state = preferred(service) ? .on : .off
+            visibilityMenu.addItem(entry)
+        }
+        visibility.submenu = visibilityMenu; menu.addItem(visibility)
+        let shortcutsItem = item("全局快捷键")
+        let shortcutMenu = NSMenu()
+        for (index, shortcut) in shortcuts.enumerated() {
+            let entry = item(shortcut.0, #selector(chooseShortcut(_:)), index)
+            entry.state = shortcutChoice == index && hotKeyAvailable ? .on : .off
+            shortcutMenu.addItem(entry)
+        }
+        let off = item("关闭快捷键", #selector(chooseShortcut(_:)), -1)
+        off.state = shortcutChoice == -1 ? .on : .off
+        shortcutMenu.addItem(.separator()); shortcutMenu.addItem(off)
+        if !hotKeyAvailable {
+            let unavailable = item("当前快捷键不可用，请选择其他组合")
+            unavailable.isEnabled = false; shortcutMenu.addItem(unavailable)
+        }
+        shortcutsItem.submenu = shortcutMenu; menu.addItem(shortcutsItem)
+        menu.addItem(.separator())
+        menu.addItem(item("退出 IP 快捷设置", #selector(quit)))
+    }
+    func serviceItem(_ service: Service) -> NSMenuItem {
+            let address = first(service.current["Addresses"])
+            let configured = first(service.config["Addresses"])
+            let offline = configured.isEmpty ? "无 IPv4" : "未连接 · 已配置 \(configured)"
+            let state = !service.enabled ? "已停用" : (address.isEmpty ? offline : address)
+            let root = item("\(service.name)  ·  \(service.device)  ·  \(state)")
             let submenu = NSMenu()
             let ip = first(service.current["Addresses"])
             let method = first(service.config["ConfigMethod"])
@@ -112,10 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 for preset in saved { removeMenu.addItem(item(preset.name, #selector(deletePreset(_:)), preset.id)) }
                 remove.submenu = removeMenu; submenu.addItem(remove)
             }
-            root.submenu = submenu; menu.addItem(root)
-        }
-        menu.addItem(.separator())
-        menu.addItem(item("退出 IP 快捷设置", #selector(quit)))
+            root.submenu = submenu; return root
     }
     func findService(_ id: String) -> Service? {
         let all = services()
@@ -185,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func applyPreset(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let p = presets.first(where: { $0.id == id }), let service = findService(p.serviceID) else { return }
         guard validIP(p.address), validMask(p.mask), validIP(p.router) else { message("保存的配置无效", "请删除并重新创建该配置。"); return }
-        guard confirm("应用“\(p.name)”？", "\(service.name)（\(service.device)）\nIP：\(p.address)\n掩码：\(p.mask)\n路由器：\(p.router)\n\n当前连接可能暂时中断。") else { return }
+        guard confirm("应用“\(p.name)”？", "\(service.name)（\(service.device)）\nIP：\(p.address)\n掩码：\(p.mask)\n路由器：\(p.router.isEmpty ? "无" : p.router)\n\n当前连接可能暂时中断。") else { return }
         _ = run(service, ["-setmanual", service.name, p.address, p.mask, p.router])
     }
     @objc func deletePreset(_ sender: NSMenuItem) {
