@@ -10,6 +10,25 @@ struct Preset: Codable {
     var router: String
 }
 
+@MainActor
+func copyIPv4Parameters(_ service: Service, to pasteboard: NSPasteboard) -> Bool {
+    let active = service.enabled && !service.current.address.isEmpty
+    let hasManualAddress = service.config.isManual && !service.config.address.isEmpty
+    let parameters = active ? service.current : (hasManualAddress ? service.config : nil)
+    let addressLabel = !active && hasManualAddress ? "已配置 IPv4" : "IPv4 地址"
+    let mask = parameters?.mask ?? ""
+    let gateway = parameters?.router ?? ""
+    let text = """
+    网卡：\(service.name)（\(service.device)）
+    配置方式：\(service.config.modeLabel)
+    \(addressLabel)：\(parameters?.address ?? "暂无")
+    子网掩码：\(mask.isEmpty ? "—" : mask)
+    网关：\(parameters == nil ? "—" : (gateway.isEmpty ? "无" : gateway))
+    """
+    pasteboard.prepareForNewContents(with: .currentHostOnly)
+    return pasteboard.setString(text, forType: .string)
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var status: NSStatusItem!
     var presets: [Preset] = []
@@ -164,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             addDetail("网关：\(service.config.router.isEmpty ? "无" : service.config.router)")
         }
         submenu.addItem(.separator())
+        submenu.addItem(item("复制当前参数", #selector(copyCurrentParameters(_:)), service.recoveryKey))
         addAction("设置静态 IPv4…", #selector(editManual(_:)), id: service.id)
         addAction("切换到 DHCP…", #selector(setDHCP(_:)), id: service.id)
         if let previous = previousConfiguration(for: service), previous != service.config {
@@ -183,6 +203,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         root.submenu = submenu
         return root
+    }
+
+    @MainActor @objc func copyCurrentParameters(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String,
+              let service = services().first(where: { $0.recoveryKey == key }) else {
+            message("找不到网卡", "请重新打开菜单并选择网卡。")
+            return
+        }
+        if !copyIPv4Parameters(service, to: .general) {
+            message("复制失败", "无法写入剪贴板，请重试。")
+        }
     }
 
     func findService(_ id: String) -> Service? {
