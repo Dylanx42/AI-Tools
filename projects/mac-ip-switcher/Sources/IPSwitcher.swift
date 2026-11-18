@@ -1,15 +1,5 @@
 import AppKit
-import SystemConfiguration
-import Darwin
-
-struct Service {
-    let id: String
-    let name: String
-    let device: String
-    let enabled: Bool
-    let config: [String: Any]
-    let current: [String: Any]
-}
+import Carbon
 
 struct Preset: Codable {
     var id: String = UUID().uuidString
@@ -20,55 +10,98 @@ struct Preset: Codable {
     var router: String
 }
 
-func services() -> [Service] {
-    guard let prefs = SCPreferencesCreate(nil, "IP Switcher" as CFString, nil),
-          let set = SCNetworkSetCopyCurrent(prefs),
-          let list = SCNetworkSetCopyServices(set) as? [SCNetworkService] else { return [] }
-    let store = SCDynamicStoreCreate(nil, "IP Switcher" as CFString, nil, nil)
-    return list.compactMap { service in
-        guard let id = SCNetworkServiceGetServiceID(service) as String?,
-              let name = SCNetworkServiceGetName(service) as String?,
-              let interface = SCNetworkServiceGetInterface(service),
-              let device = SCNetworkInterfaceGetBSDName(interface) as String? else { return nil }
-        let proto = SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeIPv4)
-        let config = proto.flatMap { SCNetworkProtocolGetConfiguration($0) as? [String: Any] } ?? [:]
-        let current = store.flatMap { SCDynamicStoreCopyValue($0, "State:/Network/Service/\(id)/IPv4" as CFString) as? [String: Any] } ?? [:]
-        return Service(id: id, name: name, device: device, enabled: SCNetworkServiceGetEnabled(service), config: config, current: current)
-    }
+@MainActor
+func copyIPv4Parameters(_ service: Service, to pasteboard: NSPasteboard) -> Bool {
+    let active = service.enabled && !service.current.address.isEmpty
+    let hasManualAddress = service.config.isManual && !service.config.address.isEmpty
+    let parameters = active ? service.current : (hasManualAddress ? service.config : nil)
+    let addressLabel = !active && hasManualAddress ? "已配置 IPv4" : "IPv4 地址"
+    let mask = parameters?.mask ?? ""
+    let gateway = parameters?.router ?? ""
+    let text = """
+    网卡：\(service.name)（\(service.device)）
+    配置方式：\(service.config.modeLabel)
+    \(addressLabel)：\(parameters?.address ?? "暂无")
+    子网掩码：\(mask.isEmpty ? "—" : mask)
+    网关：\(parameters == nil ? "—" : (gateway.isEmpty ? "无" : gateway))
+    """
+    pasteboard.prepareForNewContents(with: .currentHostOnly)
+    return pasteboard.setString(text, forType: .string)
 }
-
-func first(_ value: Any?) -> String {
-    if let values = value as? [String] { return values.first ?? "" }
-    return value as? String ?? ""
-}
-func validIP(_ value: String) -> Bool {
-    var addr = in_addr()
-    return value.withCString { inet_pton(AF_INET, $0, &addr) } == 1
-}
-func validMask(_ value: String) -> Bool {
-    guard validIP(value) else { return false }
-    let parts = value.split(separator: ".").compactMap { UInt32($0) }
-    guard parts.count == 4 else { return false }
-    let mask = parts.reduce(UInt32(0)) { ($0 << 8) | $1 }
-    let inv = ~mask
-    return mask != 0 && (inv &+ 1) & inv == 0
-}
-func shellQuote(_ s: String) -> String { "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-func appleQuote(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"").replacingOccurrences(of: "\n", with: "\\n").replacingOccurrences(of: "\r", with: "\\r") + "\"" }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var status: NSStatusItem!
     var presets: [Preset] = []
     let defaultsKey = "savedIPv4Presets"
+    let recoveryKey = "previousIPv4Configurations"
+    let visibilityKey = "visibleNetworkServices"
+    let shortcutKey = "globalShortcutChoice"
+    var hotKey: EventHotKeyRef?
+    var hotKeyHandler: EventHandlerRef?
+    var hotKeyAvailable = false
+    let shortcuts: [(String, UInt32)] = [("⌃⌥⌘ I", UInt32(kVK_ANSI_I)), ("⌃⌥⌘ J", UInt32(kVK_ANSI_J)), ("⌃⌥⌘ K", UInt32(kVK_ANSI_K))]
+
+    func preferred(_ service: Service) -> Bool {
+        if let ids = UserDefaults.standard.stringArray(forKey: visibilityKey) { return ids.contains(service.id) }
+        return service.name == "Wi-Fi" || service.name == "USB 10/100/1000 LAN"
+    }
+    var shortcutChoice: Int {
+        UserDefaults.standard.object(forKey: shortcutKey) == nil ? 0 : UserDefaults.standard.integer(forKey: shortcutKey)
+    }
+    func installHotKey(_ choice: Int) -> Bool {
+        guard shortcuts.indices.contains(choice) else { return choice == -1 }
+        var ref: EventHotKeyRef?
+        let id = EventHotKeyID(signature: OSType(0x49505357), id: 1)
+        let modifiers = UInt32(controlKey | optionKey | cmdKey)
+        let result = RegisterEventHotKey(shortcuts[choice].1, modifiers, id, GetApplicationEventTarget(), OptionBits(kEventHotKeyExclusive), &ref)
+        guard result == noErr, let ref = ref else { return false }
+        hotKey = ref
+        return true
+    }
+    func configureHotKey() {
+        var type = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
+            guard let event = event, let context = context else { return OSStatus(eventNotHandledErr) }
+            var id = EventHotKeyID()
+            guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &id) == noErr,
+                  id.signature == OSType(0x49505357), id.id == 1 else { return OSStatus(eventNotHandledErr) }
+            let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
+            DispatchQueue.main.async { delegate.status.button?.performClick(nil) }
+            return noErr
+        }, 1, &type, Unmanaged.passUnretained(self).toOpaque(), &hotKeyHandler)
+        hotKeyAvailable = installHotKey(shortcutChoice)
+    }
+    @objc func chooseShortcut(_ sender: NSMenuItem) {
+        guard let choice = sender.representedObject as? Int, choice != shortcutChoice || !hotKeyAvailable else { return }
+        let old = shortcutChoice
+        if let ref = hotKey { UnregisterEventHotKey(ref); hotKey = nil }
+        if installHotKey(choice) {
+            UserDefaults.standard.set(choice, forKey: shortcutKey)
+            hotKeyAvailable = true
+        } else {
+            hotKeyAvailable = installHotKey(old)
+            message("快捷键不可用", "该组合已被系统或其他程序占用，请选择其他组合。原设置保持不变。")
+        }
+    }
+    @objc func toggleService(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        let all = services()
+        var ids = Set(UserDefaults.standard.stringArray(forKey: visibilityKey) ?? all.filter { preferred($0) }.map { $0.id })
+        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
+        UserDefaults.standard.set(Array(ids), forKey: visibilityKey)
+    }
+
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let data = UserDefaults.standard.data(forKey: defaultsKey), let saved = try? JSONDecoder().decode([Preset].self, from: data) { presets = saved }
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         status.button?.image = NSImage(systemSymbolName: "network", accessibilityDescription: "IP 快捷设置")
         status.button?.image?.isTemplate = true
+        status.button?.toolTip = "IP 快捷设置"
         let menu = NSMenu()
         menu.delegate = self
         status.menu = menu
+        configureHotKey()
     }
     func savePresets() {
         if let data = try? JSONEncoder().encode(presets) { UserDefaults.standard.set(data, forKey: defaultsKey) }
@@ -86,43 +119,123 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         heading.isEnabled = false
         menu.addItem(heading)
         if list.isEmpty { let empty = item("未找到当前网络位置中的网卡"); empty.isEnabled = false; menu.addItem(empty) }
-        for service in list {
-            let root = item("\(service.name)  ·  \(service.device)\(service.enabled ? "" : "（已停用）")")
-            let submenu = NSMenu()
-            let ip = first(service.current["Addresses"])
-            let method = first(service.config["ConfigMethod"])
-            let label = item("当前 IPv4：\(ip.isEmpty ? "未连接或无地址" : ip)")
-            label.isEnabled = false; submenu.addItem(label)
-            let mode = item("配置方式：\(method == "DHCP" ? "DHCP" : method == "Manual" ? "手动" : (method.isEmpty ? "未知" : method))")
-            mode.isEnabled = false; submenu.addItem(mode)
-            submenu.addItem(.separator())
-            let manual = item("设置静态 IPv4…", #selector(editManual(_:)), service.id)
-            manual.isEnabled = service.enabled; submenu.addItem(manual)
-            let dhcp = item("切换到 DHCP…", #selector(setDHCP(_:)), service.id)
-            dhcp.isEnabled = service.enabled; submenu.addItem(dhcp)
-            let saved = presets.filter { $0.serviceID == service.id }
-            if !saved.isEmpty {
-                submenu.addItem(.separator())
-                for preset in saved {
-                    let p = item("使用：\(preset.name)（\(preset.address)）…", #selector(applyPreset(_:)), preset.id)
-                    p.isEnabled = service.enabled; submenu.addItem(p)
-                }
-                let remove = item("删除已保存配置")
-                let removeMenu = NSMenu()
-                for preset in saved { removeMenu.addItem(item(preset.name, #selector(deletePreset(_:)), preset.id)) }
-                remove.submenu = removeMenu; submenu.addItem(remove)
-            }
-            root.submenu = submenu; menu.addItem(root)
+        let visible = list.filter { preferred($0) }
+        let hidden = list.filter { !preferred($0) }
+        if visible.isEmpty && !list.isEmpty {
+            let empty = item("没有已显示的网卡，请在显示设置中选择")
+            empty.isEnabled = false; menu.addItem(empty)
         }
+        for service in visible { menu.addItem(serviceItem(service)) }
+        if !hidden.isEmpty {
+            let other = item("其他网卡（\(hidden.count)）")
+            let sub = NSMenu()
+            for service in hidden { sub.addItem(serviceItem(service)) }
+            other.submenu = sub; menu.addItem(other)
+        }
+        menu.addItem(.separator())
+        let visibility = item("选择显示的网卡")
+        let visibilityMenu = NSMenu()
+        for service in list {
+            let entry = item("\(service.name)  ·  \(service.device)", #selector(toggleService(_:)), service.id)
+            entry.state = preferred(service) ? .on : .off
+            visibilityMenu.addItem(entry)
+        }
+        visibility.submenu = visibilityMenu; menu.addItem(visibility)
+        let shortcutsItem = item("全局快捷键")
+        let shortcutMenu = NSMenu()
+        for (index, shortcut) in shortcuts.enumerated() {
+            let entry = item(shortcut.0, #selector(chooseShortcut(_:)), index)
+            entry.state = shortcutChoice == index && hotKeyAvailable ? .on : .off
+            shortcutMenu.addItem(entry)
+        }
+        let off = item("关闭快捷键", #selector(chooseShortcut(_:)), -1)
+        off.state = shortcutChoice == -1 ? .on : .off
+        shortcutMenu.addItem(.separator()); shortcutMenu.addItem(off)
+        if !hotKeyAvailable {
+            let unavailable = item("当前快捷键不可用，请选择其他组合")
+            unavailable.isEnabled = false; shortcutMenu.addItem(unavailable)
+        }
+        shortcutsItem.submenu = shortcutMenu; menu.addItem(shortcutsItem)
         menu.addItem(.separator())
         menu.addItem(item("退出 IP 快捷设置", #selector(quit)))
     }
+    func serviceItem(_ service: Service) -> NSMenuItem {
+        let address = service.current.address
+        let configured = service.config.address
+        let offline = configured.isEmpty ? "无 IPv4" : "未连接 · 已配置 \(configured)"
+        let state = !service.enabled ? "已停用" : (address.isEmpty ? offline : address)
+        let root = item("\(service.name)  ·  \(service.device)  ·  \(state)")
+        let submenu = NSMenu()
+        submenu.autoenablesItems = false
+        func addDetail(_ text: String) {
+            let detail = item(text)
+            detail.isEnabled = false
+            submenu.addItem(detail)
+        }
+        func addAction(_ title: String, _ action: Selector, id: String) {
+            let entry = item(title, action, id)
+            entry.isEnabled = service.canConfigure
+            submenu.addItem(entry)
+        }
+        addDetail("当前 IPv4：\(address.isEmpty ? "未连接或无地址" : address)")
+        addDetail("配置方式：\(service.config.modeLabel)")
+        if service.config.isManual {
+            addDetail("网关：\(service.config.router.isEmpty ? "无" : service.config.router)")
+        }
+        submenu.addItem(.separator())
+        submenu.addItem(item("复制当前参数", #selector(copyCurrentParameters(_:)), service.recoveryKey))
+        addAction("设置静态 IPv4…", #selector(editManual(_:)), id: service.id)
+        addAction("切换到 DHCP…", #selector(setDHCP(_:)), id: service.id)
+        if let previous = previousConfiguration(for: service), previous != service.config {
+            addAction("恢复上一次 IPv4 配置…", #selector(restorePrevious(_:)), id: service.id)
+        }
+        let saved = presets.filter { $0.serviceID == service.id }
+        if !saved.isEmpty {
+            submenu.addItem(.separator())
+            for preset in saved {
+                addAction("使用：\(preset.name)（\(preset.address)）…", #selector(applyPreset(_:)), id: preset.id)
+            }
+            let remove = item("删除已保存配置")
+            let removeMenu = NSMenu()
+            for preset in saved { removeMenu.addItem(item(preset.name, #selector(deletePreset(_:)), preset.id)) }
+            remove.submenu = removeMenu
+            submenu.addItem(remove)
+        }
+        root.submenu = submenu
+        return root
+    }
+
+    @MainActor @objc func copyCurrentParameters(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String,
+              let service = services().first(where: { $0.recoveryKey == key }) else {
+            message("找不到网卡", "请重新打开菜单并选择网卡。")
+            return
+        }
+        if !copyIPv4Parameters(service, to: .general) {
+            message("复制失败", "无法写入剪贴板，请重试。")
+        }
+    }
+
     func findService(_ id: String) -> Service? {
-        let all = services()
-        guard let service = all.first(where: { $0.id == id }), service.enabled else { message("网卡不可用", "网络服务已移除或停用，请重新打开菜单。 "); return nil }
-        guard all.filter({ $0.name == service.name }).count == 1 else { message("网络服务名称重复", "macOS 的网络命令按服务名称操作。请先在系统设置中为网络服务设置唯一名称。 "); return nil }
+        guard let service = services().first(where: { $0.id == id }), service.canConfigure else {
+            message("网卡不可用", "网络服务已移除、停用或不支持修改 IPv4。请重新打开菜单。")
+            return nil
+        }
         return service
     }
+
+    func previousConfiguration(for service: Service) -> IPv4Configuration? {
+        guard let values = UserDefaults.standard.dictionary(forKey: recoveryKey)?[service.recoveryKey] as? [String: Any]
+        else { return nil }
+        return IPv4Configuration(values: values)
+    }
+
+    func rememberConfiguration(of service: Service) {
+        var records = UserDefaults.standard.dictionary(forKey: recoveryKey) ?? [:]
+        records[service.recoveryKey] = service.config.values
+        UserDefaults.standard.set(records, forKey: recoveryKey)
+    }
+
     func message(_ title: String, _ info: String) {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert(); alert.messageText = title; alert.informativeText = info; alert.runModal()
@@ -133,61 +246,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "继续"); alert.addButton(withTitle: "取消")
         return alert.runModal() == .alertFirstButtonReturn
     }
-    func run(_ service: Service, _ args: [String]) -> Bool {
-        let cmd = (["/usr/sbin/networksetup"] + args).map(shellQuote).joined(separator: " ")
-        let source = "do shell script \(appleQuote(cmd)) with administrator privileges"
-        var error: NSDictionary?
-        guard let script = NSAppleScript(source: source) else { message("无法执行", "无法创建系统授权请求。"); return false }
-        _ = script.executeAndReturnError(&error)
-        if let error = error {
-            let number = error[NSAppleScript.errorNumber] as? Int
-            if number != -128 { message("网络设置未完成", (error[NSAppleScript.errorMessage] as? String) ?? "系统未返回详细错误。") }
-            return false
+    func apply(_ configuration: IPv4Configuration, to service: Service) -> Bool {
+        do {
+            let writer = try IPv4Writer()
+            if try writer.apply(configuration, to: service) {
+                rememberConfiguration(of: service)
+                message("IPv4 设置已保存", "\(service.name) 的新配置已保存并提交给 macOS。请在菜单中查看当前地址。")
+            }
+            return true
+        } catch IPv4WriteError.uncertain(let details) {
+            rememberConfiguration(of: service)
+            message("请核对 IPv4 设置", "\(details) 你可以在菜单中恢复原配置。")
+        } catch {
+            message("网络设置未完成", error.localizedDescription)
         }
-        message("设置已提交", "\(service.name) 的 IPv4 设置已更新。网络可能需要片刻重新连接，请在菜单中刷新查看当前地址。")
-        return true
+        return false
     }
+
     @objc func setDHCP(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let service = findService(id) else { return }
         guard confirm("切换到 DHCP？", "将 \(service.name)（\(service.device)）的 IPv4 改为自动获取。当前连接可能暂时中断。") else { return }
-        _ = run(service, ["-setdhcp", service.name])
+        _ = apply(service.config.settingDHCP(), to: service)
     }
+
+    @objc func restorePrevious(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let service = findService(id),
+              let previous = previousConfiguration(for: service), previous != service.config else { return }
+        var summary = "\(service.name)（\(service.device)）\n配置方式：\(previous.modeLabel)"
+        if !previous.address.isEmpty {
+            summary += "\nIP：\(previous.address)\n掩码：\(previous.mask)"
+        }
+        if previous.isManual {
+            summary += "\n网关：\(previous.router.isEmpty ? "无" : previous.router)"
+        }
+        guard confirm("恢复上一次 IPv4 配置？", summary) else { return }
+        _ = apply(previous, to: service)
+    }
+
     @objc func editManual(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let service = findService(id) else { return }
         let alert = NSAlert(); alert.messageText = "设置静态 IPv4"; alert.informativeText = "\(service.name)（\(service.device)）\n修改后网络可能暂时中断。"
         alert.addButton(withTitle: "应用"); alert.addButton(withTitle: "取消")
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 155))
-        func field(_ title: String, _ y: CGFloat, _ value: String) -> NSTextField {
-            let label = NSTextField(labelWithString: title); label.frame = NSRect(x: 0, y: y + 3, width: 82, height: 20); view.addSubview(label)
-            let text = NSTextField(string: value); text.frame = NSRect(x: 85, y: y, width: 230, height: 24); view.addSubview(text); return text
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 344, height: 151))
+        func field(_ title: String, _ y: CGFloat, _ value: String, placeholder: String? = nil) -> NSTextField {
+            let label = NSTextField(labelWithString: title)
+            label.frame = NSRect(x: 0, y: y + 3, width: 108, height: 20)
+            view.addSubview(label)
+            let text = NSTextField(string: value)
+            text.placeholderString = placeholder
+            text.setAccessibilityLabel(title)
+            text.frame = NSRect(x: 110, y: y, width: 230, height: 24)
+            view.addSubview(text)
+            return text
         }
-        let ip = field("IP 地址", 125, first(service.config["Addresses"]).isEmpty ? first(service.current["Addresses"]) : first(service.config["Addresses"]))
-        let mask = field("子网掩码", 95, first(service.config["SubnetMasks"]).isEmpty ? first(service.current["SubnetMasks"]) : first(service.config["SubnetMasks"]))
-        let router = field("路由器", 65, first(service.config["Router"]).isEmpty ? first(service.current["Router"]) : first(service.config["Router"]))
-        let name = field("保存名称", 35, "")
-        let tip = NSTextField(labelWithString: "填写保存名称可供以后快捷切换（可选）")
-        tip.font = .systemFont(ofSize: 11); tip.textColor = .secondaryLabelColor; tip.frame = NSRect(x: 85, y: 10, width: 230, height: 18); view.addSubview(tip)
+        let initial = service.config.isManual ? service.config : service.current
+        let ip = field("IP 地址", 121, initial.address)
+        let mask = field("子网掩码", 90, initial.mask)
+        let router = field("网关（可选）", 59, service.config.isManual ? service.config.router : "",
+                           placeholder: "留空则不设置网关")
+        let name = field("保存名称", 28, "", placeholder: "可选，用于下次快速切换")
+        ip.nextKeyView = mask
+        mask.nextKeyView = router
+        router.nextKeyView = name
         alert.accessoryView = view
+        alert.window.initialFirstResponder = ip
         NSApp.activate(ignoringOtherApps: true)
         while alert.runModal() == .alertFirstButtonReturn {
-            let addr = ip.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let netmask = mask.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let gateway = router.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let settings = ManualIPv4(address: ip.stringValue, mask: mask.stringValue, gateway: router.stringValue)
+            else {
+                message("地址格式不正确", "请填写有效的 IPv4 地址和连续的子网掩码。网关可以留空，填写时须为 IPv4 地址。")
+                continue
+            }
             let title = name.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard validIP(addr), validMask(netmask), validIP(gateway) else { message("地址格式不正确", "请输入有效的 IPv4 地址、连续的子网掩码和路由器地址。 "); continue }
-            guard let latest = findService(id) else { return }
-            if run(latest, ["-setmanual", latest.name, addr, netmask, gateway]), !title.isEmpty {
-                presets.append(Preset(serviceID: id, name: title, address: addr, mask: netmask, router: gateway)); savePresets()
+            if apply(service.config.settingManual(settings), to: service), !title.isEmpty {
+                presets.append(Preset(serviceID: id, name: title, address: settings.address,
+                                      mask: settings.mask, router: settings.gateway ?? ""))
+                savePresets()
             }
             return
         }
     }
+
     @objc func applyPreset(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let p = presets.first(where: { $0.id == id }), let service = findService(p.serviceID) else { return }
-        guard validIP(p.address), validMask(p.mask), validIP(p.router) else { message("保存的配置无效", "请删除并重新创建该配置。"); return }
-        guard confirm("应用“\(p.name)”？", "\(service.name)（\(service.device)）\nIP：\(p.address)\n掩码：\(p.mask)\n路由器：\(p.router)\n\n当前连接可能暂时中断。") else { return }
-        _ = run(service, ["-setmanual", service.name, p.address, p.mask, p.router])
+        guard let id = sender.representedObject as? String, let preset = presets.first(where: { $0.id == id }),
+              let service = findService(preset.serviceID) else { return }
+        guard let settings = ManualIPv4(address: preset.address, mask: preset.mask, gateway: preset.router) else {
+            message("保存的配置无效", "请删除并重新创建该配置。")
+            return
+        }
+        let summary = "\(service.name)（\(service.device)）\nIP：\(settings.address)\n掩码：\(settings.mask)\n网关：\(settings.gateway ?? "无")"
+        guard confirm("应用“\(preset.name)”？", summary) else { return }
+        _ = apply(service.config.settingManual(settings), to: service)
     }
+
     @objc func deletePreset(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let p = presets.first(where: { $0.id == id }), confirm("删除“\(p.name)”？", "只删除本地保存的快捷配置，不修改当前网络设置。") else { return }
         presets.removeAll { $0.id == id }; savePresets()
@@ -195,18 +346,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func quit() { NSApp.terminate(nil) }
 }
 
-if CommandLine.arguments.contains("--self-check") {
-    precondition(validIP("192.168.1.20") && !validIP("999.1.2.3") && !validIP("1.2.3.4; id"))
+func selfCheck() {
+    precondition(validIP("192.168.1.20") && !validIP("999.1.2.3") && !validIP("192.168.1.20\0"))
     precondition(validMask("255.255.255.0") && validMask("255.255.255.255"))
     precondition(!validMask("255.0.255.0") && !validMask("0.0.0.0"))
-    precondition(shellQuote("a'b") == "'a'\\''b'")
-    let list = services()
-    print("校验通过；当前网络位置发现 \(list.count) 个可显示的网络服务。")
-    exit(0)
+    let existing = IPv4Configuration(values: ["ConfigMethod": "Manual",
+                                              "Addresses": ["192.0.2.20"], "SubnetMasks": ["255.255.255.0"],
+                                              "Router": "192.0.2.1", "DHCPClientID": "example"])
+    let noGateway = ManualIPv4(address: "192.0.2.20", mask: "255.255.255.0", gateway: "  ")!
+    let changed = existing.settingManual(noGateway)
+    precondition(changed.isManual && changed.values["Router"] == nil)
+    precondition(changed.settingDHCP().values["DHCPClientID"] as? String == "example")
+    precondition(changed.settingDHCP().settingManual(noGateway) == changed)
+    precondition(ManualIPv4(address: "192.0.2.20", mask: "255.255.255.0", gateway: "invalid") == nil)
+    print("校验通过；当前网络位置发现 \(services().count) 个网络服务。")
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()
+@main
+enum IPSwitcher {
+    @MainActor
+    static func main() {
+        if CommandLine.arguments.contains("--self-check") {
+            selfCheck()
+            return
+        }
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.accessory)
+        withExtendedLifetime(delegate) { app.run() }
+    }
+}
