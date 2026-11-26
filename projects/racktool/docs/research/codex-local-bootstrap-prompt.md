@@ -1,7 +1,8 @@
 # Codex 本地接入与落库提示词
 
-> 历史说明：本文件保留 Phase 0 落库时使用的提示词，不代表当前项目状态；当前状态见
-> `../../README.md` 与 `../gates/V0.5-integrated-audit.md`。
+> 历史说明：本文件保留 Phase 0 落库时使用的提示词，不代表当前项目状态；当前入口见
+> [README](../../README.md)，新任务按[本地优先规范](../development/local-first-workflow.md)执行，
+> 不再用本提示词重新初始化项目或恢复云端主开发分工。
 
 把下面整段交给**本地 Codex**。同时把 `RackTool-Phase0-Docs.zip` 提供给它，并确保它能够访问你本地已经 clone 的 `AI-Tools` 仓库。
 

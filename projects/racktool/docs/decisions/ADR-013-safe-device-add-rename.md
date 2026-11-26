@@ -31,5 +31,8 @@
 ## Consequences
 
 确定性新增/改名无需 Office 或 Agent。GUI 接入后只能调用相同计划与提交 API。
-不包含已有设备调整 U 高度、跨 Sheet 移动或 Excel Shape；这些仍需独立设计。
+本 ADR 在 2026-10-13 的增量范围不包含已有设备调整 U 高度、跨 Sheet 移动或 Excel Shape。
+前两项已由后续 [ADR-016](ADR-016-skill-workflows-and-table-roundtrip.md) 扩展：同一项目绑定的
+同一工作簿内可跨 Sheet 移动，move 保持高度、edit 可显式改高；原有 Safe Sync 保护继续生效。
+Excel Shape 解析编辑仍不支持。本 ADR 的新增/改名事务设计继续有效。
 生成布局矩阵与真实私有工作簿回归分别记录，不以 synthetic 结果宣称任意 Excel 兼容或实机通过。

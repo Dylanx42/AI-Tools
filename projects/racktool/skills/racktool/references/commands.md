@@ -45,7 +45,10 @@ python scripts/run.py export draft.sqlite draft.xlsx
 新建项目命令直接保存 SQLite，导出产生 Excel；重新导入导出文件形成另一份身份，不能代替
 保留 SQLite。新建项目没有原始版面，因此不能使用 `--layout source`。
 
-已有绑定设备改高、跨机房移动走下述 conversation edit；同步入口也提供 sync edit。
+已有绑定设备改高、跨机房移动优先走下述 conversation edit；同步入口也提供 sync edit。
+范围限于同一 SQLite 项目绑定的同一 XLSX，目标必须是项目已识别的机柜。`sync move` 也支持
+跨 Sheet，但必须保持原 U 高度；显式改高使用 edit。按目标机柜自己的 U 方向映射，保留设备
+列数和相对列位置；目标过窄、占用、越界或对象保真检查失败时拒绝。不支持跨 XLSX/跨项目迁移。
 
 ## 对话协议（优先使用）
 

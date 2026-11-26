@@ -1,11 +1,18 @@
 # RackTool 开发路线图
 
-## 当前开发分工（2026-10-26，北京时间）
+## 当前开发分工与验收边界（2026-10-30 核对，北京时间）
 
 用户本地 Astra 可用期间以本机源码开发为主，云端受委派做审查和独立任务，GitHub 维持正式主线。
-见 [分工、同步与本地接管规范](../development/local-first-workflow.md)。先完成既有五项流程的真实
-Agent/Excel-WPS 副本验收再决定下一项开发；当前未核对本机未推代码，不声明本机已同步或验收通过。
+分工自 2026-10-26 生效，见 [分工、同步与本地接管规范](../development/local-first-workflow.md)。
+本机 Codex 明确调用正式 Skill 和独立新会话恢复的合成验收已通过，见
+[2026-10-30 验收记录](../updates/2026-10-30-agent-recovery-acceptance.md)。真实图、Windows 实机和
+Excel/WPS 验收按用户要求暂缓；WorkBuddy/TRAE 与自动发现机制仍需分别验证。
+本机未推代码、主线同步和安装版本须按每次任务实查，不沿用历史快照作当前状态。
 产品仍走 Skill → RackCore/CLI，GUI 优先级保持较低。下列日期阶段记录继续作为历史证据保留。
+
+跨机房 Sheet 移动已支持，范围是同一项目绑定的同一工作簿内。`sync move` 保持 U 高度，
+`sync edit`、对话 edit 和位置表回导可显式改高；占用、越界、宽度/布局和对象保真保护继续生效。
+不支持跨工作簿/跨项目迁移，详见 [README 支持范围](../../README.md#已绑定工作簿的移动与编辑范围)。
 
 ## 当前用户路线（2026-10-14，北京时间）
 
@@ -17,14 +24,15 @@ Agent/Excel-WPS 副本验收再决定下一项开发；当前未核对本机未�
 后续优先自然语言唯一对象定位、布局适配、现有写回限制和 Excel/WPS 输出验收；
 历史 GUI 待办不是当前阻塞，下面旧阶段结果保留为带日期历史记录。
 
-## 2026-10-15 并行增量
+## 2026-10-15 并行增量（历史记录）
 
 对话协议/名称查询/空闲 U、陌生布局候选与坐标规则、绑定改高/跨 Sheet 移动、位置表回导
 已作为同一 Skill 工作流增量实现。设计、保护与限制见 ADR-016，实际证据见本轮更新记录。
 系统与 CLI 集成测试不替代 Agent 软件调用；真实 Codex CLI 在云端启动受只读 installation_id
-阻塞，本机 Codex/WorkBuddy/TRAE 和 Excel/WPS 仍需验收。异构多 Profile 暂独立项目。
+阻塞，当时本机 Codex/WorkBuddy/TRAE 和 Excel/WPS 尚待验收。后续范围以本页顶部的带日期记录
+为准；异构多 Profile 仍暂用独立项目。
 
-## 当前门禁状态（2026-09-14）
+## 历史门禁状态（2026-09-14 起的阶段记录）
 
 - Phase 0：PASS，详见 `docs/gates/PHASE0.md`。
 - V0.1 Reader：AUTOMATED PASS，详见 `docs/gates/V0.1.md`。
@@ -344,16 +352,16 @@ Reader 能稳定从真实 XLSX 得到正确 Rack/U/Device。
 
 只有 M1–M3 都成立，RackTool 才算真正“成了”。
 
-## 5. 开发环境与验收
+## 5. 当前开发环境与验收分工
 
 | 环境 | 角色 |
 |---|---|
-| Codex Cloud | 主开发 |
-| GitHub AI-Tools/projects/racktool | 唯一代码事实来源 |
-| MacBook Air | macOS 验收 |
-| PD Windows 11 ARM | 快速 Windows 验收 |
-| Lenovo R7000P x86-64 | 正式 Windows/Office/WPS 验收 |
-| GitHub Actions | 自动测试和发布（后续） |
+| 本地 Agent / MacBook Air | 主导源码开发、调试、回归、实际 Agent 调用；按授权进行本机验收 |
+| Codex Cloud | 接受明确委派的审查或独立任务，不替代本地未推代码 |
+| GitHub AI-Tools/projects/racktool | 正式 main、任务分支、PR、设计及验收记录 |
+| PD Windows 11 ARM | Windows ARM 兼容快测目标，实机验收暂缓 |
+| Lenovo R7000P x86-64 | Windows/Office/WPS 正式人工验收目标，暂缓 |
+| GitHub Actions | 已运行跨平台自动检查、Windows 打包和正式 Skill 标签发布；不等于实机验收 |
 
 ## 6. 暂不进入路线的事项
 

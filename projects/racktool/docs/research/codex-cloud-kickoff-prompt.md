@@ -1,8 +1,8 @@
 # Codex Cloud 开工提示词
 
 > 历史说明：本文件保留 V0.1 开工时使用的提示词，不代表当前项目状态；其中 Golden Sample
-> follow-up 已由后续私有验收完成。当前状态见 `../../README.md` 与
-> `../gates/V0.5-integrated-audit.md`。
+> follow-up 已由后续私有验收完成。当前入口见 [README](../../README.md)，云端新任务仅接受
+> [本地优先规范](../development/local-first-workflow.md)中的明确委派，不重新执行本开工流程。
 
 将下面整段作为 RackTool 第一个 Codex Cloud 开发任务使用。
 
